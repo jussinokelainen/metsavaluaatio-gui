@@ -3,6 +3,11 @@ name = "metsaval"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Graafinen käyttöliittymä. Oletuksena pois päältä, jotta pelkkä CLI
+# rakentuu ilman GUI-riippuvuuksia: cargo build --features gui
+gui = ["dep:eframe", "dep:egui_extras"]
+
 [dependencies]
 color-eyre = "0.6.5"
 geo = "0.33.1"
@@ -21,3 +26,23 @@ chrono = "0.4.45"
 rand = "0.10.3"
 dirs = "7.0.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+# Graafinen käyttöliittymä (metsaval-gui)
+eframe = { version = "0.37.0", optional = true, default-features = false, features = [
+    "glow",
+    "x11",
+    "wayland",
+    "default_fonts",
+    "system_fonts",
+    "links",
+] }
+egui_extras = { version = "0.37.0", optional = true, default-features = false }
+
+[[bin]]
+name = "metsaval"
+path = "src/main.rs"
+
+[[bin]]
+name = "metsaval-gui"
+path = "src/bin/metsaval-gui/main.rs"
+required-features = ["gui"]

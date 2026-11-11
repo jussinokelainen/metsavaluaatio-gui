@@ -66,6 +66,36 @@ Tämä näyttää lyhyen yhteenvedon kiinteistöstä, ja halutessaan luo
 ohjelma avaa automaattisesti selaimeen uuden välilehden oikeassa osoitteessa, muuten
 antaa linkin osoitteen avaamiseen.
 
+#### Graafinen käyttöliittymä
+
+Ohjelmasta on myös graafinen työpöytäsovellus. Se käyttää samoja asetuksia ja
+kuntamuistia kuin komentorivityökalu, joten API-avainta ei tarvitse syöttää
+uudelleen.
+
+GUI on valinnainen Cargo-feature, jotta pelkkä CLI rakentuu ilman
+käyttöliittymäkirjastoja:
+
+```bash
+cargo run --release --features gui --bin metsaval-gui
+```
+
+Asennus molempien binäärien kanssa:
+
+```bash
+cargo install --path . --features gui
+```
+
+Graafisessa käyttöliittymässä voit:
+
+- hakea arvion kiinteistötunnuksella
+- syöttää ja tallentaa MML API-avaimen
+- käyttää valmista GeoPackagea tai antaa latauskansion
+- tarkastella kuviokohtaisia ja puulajikohtaisia tuloksia
+- tallentaa Excel-yhteenvedon ja Google Maps -tason (KML) valittuun kansioon
+
+Linuxissa GUI tarvitsee X11- tai Wayland-ympäristön sekä OpenGL-ajurin
+(`glow`-renderöijä).
+
 #### Hyödyllisiä flageja
 ```bash
 metsaval --gpkg-kohde
