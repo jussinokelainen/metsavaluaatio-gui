@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-# Graafinen käyttöliittymä. Oletuksena pois päältä, jotta pelkkä CLI
-# rakentuu ilman GUI-riippuvuuksia: cargo build --features gui
+# Graafinen käyttöliittymä on oletuksena käytössä.
+# Pelkän CLI:n voi rakentaa: cargo build --no-default-features
+default = ["gui"]
 gui = ["dep:eframe", "dep:egui_extras"]
 
 [dependencies]

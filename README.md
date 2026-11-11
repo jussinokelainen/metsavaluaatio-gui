@@ -72,17 +72,23 @@ Ohjelmasta on myös graafinen työpöytäsovellus. Se käyttää samoja asetuksi
 kuntamuistia kuin komentorivityökalu, joten API-avainta ei tarvitse syöttää
 uudelleen.
 
-GUI on valinnainen Cargo-feature, jotta pelkkä CLI rakentuu ilman
-käyttöliittymäkirjastoja:
+GUI on oletuksena käytössä tässä forkissa. Pelkän komentorivityökalun voi
+rakentaa ilman käyttöliittymäkirjastoja:
 
 ```bash
-cargo run --release --features gui --bin metsaval-gui
+cargo build --release --no-default-features
+```
+
+Käynnistys:
+
+```bash
+cargo run --release --bin metsaval-gui
 ```
 
 Asennus molempien binäärien kanssa:
 
 ```bash
-cargo install --path . --features gui
+cargo install --path .
 ```
 
 Graafisessa käyttöliittymässä voit:
