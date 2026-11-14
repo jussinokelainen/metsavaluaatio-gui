@@ -1,6 +1,11 @@
 METSÄVALUAATIO-GUI
 ===================
 
+[![Rust](https://github.com/jussinokelainen/metsavaluaatio-gui/actions/workflows/rust.yml/badge.svg?branch=master)](https://github.com/jussinokelainen/metsavaluaatio-gui/actions/workflows/rust.yml)
+
+[![Release](https://img.shields.io/github/v/release/jussinokelainen/metsavaluaatio-gui?sort=semver)](https://github.com/jussinokelainen/metsavaluaatio-gui/releases)
+![Homebrew](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2Fjussinokelainen%2Fhomebrew-metsavaluaatio%2Fraw%2Frefs%2Fheads%2Fmaster%2Fgui_version.json&query=%24.version&label=homebrew)
+
 GUI versio Metsävaluaatio ohjelmasta.
 
 CLI Versio: https://github.com/jussinokelainen/metsavaluaatio

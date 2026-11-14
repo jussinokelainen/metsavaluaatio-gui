@@ -50,6 +50,7 @@ end
 EOF
 
 cp ./metsavaluaatio-gui.rb ./homebrew-metsavaluaatio/Casks/metsavaluaatio-gui.rb
+printf '{"version": "%s"}\n' "$VERSION" >./homebrew-metsavaluaatio/gui_version.json
 echo "Formula files updated."
 
 message="Updated gui to version $VERSION"
