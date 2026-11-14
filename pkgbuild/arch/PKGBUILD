@@ -3,7 +3,7 @@
 # Tämä paketti sisältää vain GPUI-pohjaisen graafisen sovelluksen.
 
 pkgname='metsavaluaatio-gui'
-pkgver=0.1.0
+pkgver=0.1.2
 pkgrel=1
 pkgdesc='Metsäomaisuuden arviointi GPUI-työpöytäsovelluksella'
 arch=('x86_64')

@@ -1,6 +1,6 @@
 [package]
 name = "metsaval"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 # Tämä repo on GUI-haara: `cargo run` käynnistää graafisen sovelluksen.
 default-run = "metsaval-gui"
