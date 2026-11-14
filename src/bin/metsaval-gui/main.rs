@@ -35,27 +35,40 @@ use ui::{
 };
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        cx.bind_keys(text_input::key_bindings());
+    let app = Application::new();
 
-        let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(840.), px(560.))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Metsävaluaatio".into()),
-                    ..Default::default()
-                }),
-                app_id: Some("metsaval".to_string()),
-                ..Default::default()
-            },
-            |_, cx| cx.new(MetsavalApp::new),
-        )
-        .expect("ikkunan avaaminen epäonnistui");
-
-        cx.activate(true);
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            open_main_window(cx);
+        } else {
+            cx.activate(true);
+        }
     });
+
+    app.run(|cx: &mut App| {
+        cx.bind_keys(text_input::key_bindings());
+        open_main_window(cx);
+    });
+}
+
+fn open_main_window(cx: &mut App) {
+    let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(840.), px(560.))),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Metsävaluaatio".into()),
+                ..Default::default()
+            }),
+            app_id: Some("metsaval".to_string()),
+            ..Default::default()
+        },
+        |_, cx| cx.new(MetsavalApp::new),
+    )
+    .expect("ikkunan avaaminen epäonnistui");
+
+    cx.activate(true);
 }
 
 /// Yläpalkin tilat.
