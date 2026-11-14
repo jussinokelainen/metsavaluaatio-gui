@@ -1,0 +1,83 @@
+
+name: Build macOS Application
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install cmake sqlite
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check Metal Toolchain
+        run: |
+          xcrun -sdk macosx metal --version
+
+      - name: Build application
+        run: |
+          cargo build --release --bin metsaval-gui
+
+      - name: Create application bundle
+        run: |
+          APP="Metsavaluaatio.app"
+
+          mkdir -p "$APP/Contents/MacOS"
+          mkdir -p "$APP/Contents/Resources"
+
+          cp target/release/metsaval-gui \
+            "$APP/Contents/MacOS/metsaval-gui"
+
+          chmod +x "$APP/Contents/MacOS/metsaval-gui"
+
+          VERSION="$GITHUB_REF_NAME"
+
+          cat > "$APP/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>metsaval-gui</string>
+              <key>CFBundleIdentifier</key>
+              <string>fi.jussinokelainen.metsavaluaatio</string>
+              <key>CFBundleName</key>
+              <string>Metsävaluaatio</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleVersion</key>
+              <string>$VERSION</string>
+              <key>CFBundleShortVersionString</key>
+              <string>$VERSION</string>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Package application
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            Metsavaluaatio.app \
+            Metsavaluaatio.app.zip
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            Metsavaluaatio.app.zip \
+            --generate-notes
