@@ -1,6 +1,8 @@
 METSÄVALUAATIO-GUI
 ===================
 
+CLI Versio: https://github.com/jussinokelainen/metsavaluaatio
+
 Metsäomaisuuden arviointiin tarkoitettu GPUI-pohjainen työpöytäsovellus.
 Ohjelma hakee kiinteistön rajat, metsävarakuviot ja puustotiedot sekä laskee
 laskennallisen arvon. Tulokset voi tallentaa Excel-yhteenvetona ja Google Maps

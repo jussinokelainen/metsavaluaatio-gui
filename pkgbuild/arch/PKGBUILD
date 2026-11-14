@@ -7,7 +7,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc='Metsäomaisuuden arviointi GPUI-työpöytäsovelluksella'
 arch=('x86_64')
-url='ssh://git@gitlab.internal.nokehub.net:222/jussinokelainen/metsavaluaatio-gui.git'
+url='ssh://git@github.com:jussinokelainen/metsavaluaatio-gui.git'
 license=('AGPL-3.0-only')
 depends=(
 	'glibc'
