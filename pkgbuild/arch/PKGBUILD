@@ -5,7 +5,7 @@
 pkgname='metsavaluaatio-gui'
 pkgver=0.1.2
 pkgrel=1
-pkgdesc='Metsäomaisuuden arviointi GPUI-työpöytäsovelluksella'
+pkgdesc='Työpöytäsovellus metsän analysointiin'
 arch=('x86_64')
 url='ssh://git@github.com:jussinokelainen/metsavaluaatio-gui.git'
 license=('AGPL-3.0-only')

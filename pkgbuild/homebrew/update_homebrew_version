@@ -33,7 +33,7 @@ cask "metsavaluaatio-gui" do
   url "https://github.com/jussinokelainen/metsavaluaatio-gui/releases/download/#{version}/$FILENAME"
 
   name "Metsävaluaatio"
-  desc "Metsäomaisuuden arviointi GPUI-työpöytäsovelluksella"
+  desc "Työpöytäsovellus metsän analysointiin"
   homepage "https://github.com/jussinokelainen/metsavaluaatio-gui"
 
   app "Metsavaluaatio.app"
