@@ -28,12 +28,12 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(egui::vec2(1120.0, 780.0))
             .with_min_inner_size(egui::vec2(840.0, 560.0))
-            .with_title("Metsävaluuatio"),
+            .with_title("Metsävaluaatio"),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Metsävaluuatio",
+        "Metsävaluaatio",
         options,
         Box::new(|cc| Ok(Box::new(MetsavalApp::new(cc)))),
     )
@@ -323,12 +323,8 @@ impl MetsavalApp {
     fn header(&mut self, ui: &mut egui::Ui) {
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            ui.heading("Metsävaluuatio");
-            ui.label(
-                egui::RichText::new("metsäomaisuuden arviointi")
-                    .color(MUTED)
-                    .small(),
-            );
+            ui.heading("Metsävaluaatio");
+            ui.label(egui::RichText::new("metsäomaisuuden arviointi").color(MUTED));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.api_key.trim().is_empty() {
                     ui.colored_label(egui::Color32::from_rgb(240, 180, 80), "API-avain puuttuu");
@@ -363,8 +359,7 @@ impl MetsavalApp {
         if self.use_gpkg {
             ui.label(
                 egui::RichText::new("Käytetään valmista GeoPackagea, kuntaa ei tarvita")
-                    .color(MUTED)
-                    .small(),
+                    .color(MUTED),
             );
         } else if let Some(name) = known {
             ui.label(format!("{name} ({})", code.unwrap_or_default()));
@@ -376,15 +371,10 @@ impl MetsavalApp {
             );
             ui.label(
                 egui::RichText::new("Nimi tallennetaan, jotta sitä ei kysytä uudelleen.")
-                    .color(MUTED)
-                    .small(),
+                    .color(MUTED),
             );
         } else {
-            ui.label(
-                egui::RichText::new("Syötä ensin kiinteistötunnus")
-                    .color(MUTED)
-                    .small(),
-            );
+            ui.label(egui::RichText::new("Syötä ensin kiinteistötunnus").color(MUTED));
         }
 
         ui.add_space(10.0);

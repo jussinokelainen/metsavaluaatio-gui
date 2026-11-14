@@ -1,8 +1,8 @@
 # Maintainer: Jussi Nokelainen <jussinoke@gmail.com>
-pkgname='metsavaluaatio'
+pkgname='metsavaluaatio-gui'
 pkgver=0.3.0
 pkgrel=1
-pkgdesc='Työkalu metsän analysointiin'
+pkgdesc='Työkalu metsän analysointiin GUI lisällä'
 arch=('x86_64')
 url="https://github.com/jussinokelainen/$pkgname"
 license=('AGPL-3.0-only')
@@ -25,5 +25,5 @@ build() {
 
 package() {
 	cd "$pkgname-$pkgver"
-	install -Dm755 target/release/metsaval "$pkgdir/usr/bin/metsaval"
+	install -Dm755 target/release/metsaval-gui "$pkgdir/usr/bin/metsaval-gui"
 }
