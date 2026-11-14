@@ -689,7 +689,7 @@ impl MetsavalApp {
             )
             .child(muted_text(
                 "Syötä kiinteistötunnus ja hae arvio. Ohjelma hakee kiinteistön rajat, \
-                 metsävarakuviot ja puustotiedot sekä laskee laskennallisen arvon.",
+                 metsävarakuviot ja puustotiedot sekä määrittää laskennallisen arvon.",
             ))
             .child(muted_text(
                 "Tulokset voi tallentaa Excel-yhteenvetona ja Google Maps -tasona (KML).",
