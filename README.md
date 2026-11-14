@@ -1,95 +1,96 @@
-METSÄVALUAATIO
-==============
+METSÄVALUAATIO-GUI
+===================
+
+Metsäomaisuuden arviointiin tarkoitettu GPUI-pohjainen työpöytäsovellus.
+Ohjelma hakee kiinteistön rajat, metsävarakuviot ja puustotiedot sekä laskee
+laskennallisen arvon. Tulokset voi tallentaa Excel-yhteenvetona ja Google Maps
+-tasona (KML).
+
+Tämä repo on graafisen käyttöliittymän haara. Paketit asentavat vain
+`metsaval-gui`-sovelluksen; repossa mukana oleva jaettu laskentakirjasto ja
+alkuperäinen komentorivityökalu eivät kuulu asennettaviin paketteihin.
 
 Asennus
 -------
 
-#### Arch linux:
+#### Arch Linux
+
 ```bash
-git clone git@github.com:jussinokelainen/metsavaluaatio.git
-cd metsavaluaatio/pkgbuild/arch
+git clone ssh://git@gitlab.internal.nokehub.net:222/jussinokelainen/metsavaluaatio-gui.git
+cd metsavaluaatio-gui/pkgbuild/arch
 makepkg -si
 ```
 
-#### macOS (homebrew):
+Uusinta git-committia seuraava paketti:
+
+```bash
+makepkg -si -p PKGBUILD-git
+```
+
+#### macOS (homebrew)
+
 ```bash
 brew tap jussinokelainen/metsavaluaatio
-brew trust jussinokelainen/metsavaluaatio
-brew install metsavaluaatio
+brew install metsavaluaatio-gui
 ```
 
 #### Cargo
 
-Ohjelman voi myös asentaa käyttäen cargoa, jolloin voi valita halutessaan
-minkä vaan commitin josta asentaa.
-
 ```bash
-git clone git@github.com:jussinokelainen/metsavaluaatio.git
-cd metsavaluaatio
-cargo install --path .
+git clone ssh://git@gitlab.internal.nokehub.net:222/jussinokelainen/metsavaluaatio-gui.git
+cd metsavaluaatio-gui
+cargo install --path . --bin metsaval-gui
 ```
 
-Muista lisätä `~/.cargo/bin` `$PATH` muuttujaan asentaessa cargolla esim `~/.bashrc` tiedostoon lisäämällä
+Muista lisätä `~/.cargo/bin` `$PATH`-muuttujaan esimerkiksi `~/.bashrc`
+tiedostoon:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-##### Riippuvuudet:
+Ei-git-paketit (`PKGBUILD` ja Homebrew-formula) rakennetaan versiontagista.
+Tagin tulee vastata `Cargo.toml`-tiedoston versiota, esimerkiksi `0.1.0`.
+Uusinta committia seuraava Arch-paketti on `PKGBUILD-git`.
+
+##### Riippuvuudet
+
 ```bash
 rust
 cmake
 sqlite
 ```
 
+macOS:lla tarvitaan lisäksi Xcode Command Line Tools GPUI:n Metal-käännökseen.
+
+Linuxissa graafinen sovellus tarvitsee lisäksi X11- tai Wayland-ympäristön,
+`libxkbcommon`- ja `libxkbcommon-x11`-kirjastot, XCB- ja freetype-tuen,
+fontconfig-pohjaisen fonttituen sekä Vulkan-ajurin. GPUI piirtää
+`blade`-renderöijällä.
+
+Paketit listaavat tarvittavat järjestelmäriippuvuudet automaattisesti.
+
 Käyttö
 ------
 
-Ennen ohjelman varsinaista käyttöä täytyy lisätä henkilökohtainen MML api-avain.
-Tämän voi joko tehdä itse luomalla tiedosto ~/.config/metsavaluaatio/config.toml
-johon lisätään kenttä `api-key = "<api-key>"`, tai komennolla
-```bash
-metsaval --aseta-api <api-key>
+Ennen ensimmäistä arviota tarvitaan henkilökohtainen MML API-avain. Sen voi
+syöttää sovelluksen vasemman paneelin **Lisäasetukset**-osiossa, jolloin avain
+tallennetaan tiedostoon:
+
+```
+~/.config/metsavaluaatio/config.toml
 ```
 
-Api avain täytyy lisätä vain kerran, tai uudestaan jos se muuttuu.
+Käynnistyksen jälkeen:
 
-Api-avaimen lisäämisen jälkeen ohjelman käyttö:
-
-```bash
-metsaval 12-345-6-789
-```
-
-Ohjelma vaatii parametrina kiinteistötunnuksen kuten yllä olevassa esimerkissä.
-Tämä näyttää lyhyen yhteenvedon kiinteistöstä, ja halutessaan luo
-.xlsx ja .kml tiedostot käyttäjän Downloads hakemistoon. `--selain` flagia käyttäessä
-ohjelma avaa automaattisesti selaimeen uuden välilehden oikeassa osoitteessa, muuten
-antaa linkin osoitteen avaamiseen.
-
-#### Graafinen käyttöliittymä
-
-Ohjelmasta on myös graafinen työpöytäsovellus. Se käyttää samoja asetuksia ja
-kuntamuistia kuin komentorivityökalu, joten API-avainta ei tarvitse syöttää
-uudelleen.
-
-GUI on oletuksena käytössä tässä forkissa. Pelkän komentorivityökalun voi
-rakentaa ilman käyttöliittymäkirjastoja:
-
-```bash
-cargo build --release --no-default-features
-```
-
-Käynnistys:
-
-```bash
-cargo run --release --bin metsaval-gui
-```
-
-Asennus molempien binäärien kanssa:
-
-```bash
-cargo install --path .
-```
+1. Syötä kiinteistötunnus, esimerkiksi `740-555-2-4`.
+2. Jos kunnalle ei ole vielä tallennettua nimeä, syötä se kerran. Nimi
+   muistetaan seuraavaa kertaa varten.
+3. Valitse tarvittaessa valmis GeoPackage tai GeoPackagen latauskansio
+   **Lisäasetukset**-osiossa.
+4. Paina **Hae arvio**.
+5. Tarkastele kuvio- ja puulajikohtaisia tuloksia sekä lokia.
+6. Valitse tulostekansio ja paina **Tallenna Excel + KML**.
 
 Graafisessa käyttöliittymässä voit:
 
@@ -98,44 +99,30 @@ Graafisessa käyttöliittymässä voit:
 - käyttää valmista GeoPackagea tai antaa latauskansion
 - tarkastella kuviokohtaisia ja puulajikohtaisia tuloksia
 - tallentaa Excel-yhteenvedon ja Google Maps -tason (KML) valittuun kansioon
+- avata Google My Maps -sivun ja tulostekansion suoraan sovelluksesta
 
-Linuxissa GUI tarvitsee X11- tai Wayland-ympäristön sekä OpenGL-ajurin
-(`glow`-renderöijä).
+Kartan luominen
+---------------
 
-#### Hyödyllisiä flageja
-```bash
-metsaval --gpkg-kohde
-metsaval --gpkg-tiedosto
-```
+Selaimessa klikkaa **Create new map**. Vasemmalla olevassa ikkunassa
+**Untitled layer** -tason alapuolelta klikkaa **import** -> **Upload** ja valitse
+ohjelman luoma `.kml`-tiedosto.
 
-`--gpkg-kohde` määrittää sijainnin johon GeoPackage ladataan, jos ei halua
-käyttää vakio /tmp kohdetta.
-
-`--gpkg-tiedosto` määrittää ohjelmalle tiedoston josta GeoPackage haetaan. Käyttämällä
-tätä flagia voi välttää GeoPackage:n lataamisen joka kerta uudestaan, jos tietää
-kiinteistön olevan samassa kunnassa kuin aikaisemmin haetun kiinteistön GeoPackage, esim:
-
-```bash
-metsaval 12-345-6-789 --gpkg-tiedosto /tmp/metsavaluaatio_123456/MV_Kunta.gpkg
-```
-
-HUOM! Tällä hetkellä ei ole mitään takuuta mitä tapahtuu jos antaa virheellistä dataa näillä flageilla!
-
-##### Lisätietoja muista ominaisuuksista:
-
-```bash
-metsaval --help
-```
-
-#### Kartan luominen:
-Selaimessa klikkaa 'Create new map' -> Vasemalla olevassa ikkunassa 'Untitled layer' alapuolella klikkaa 'import' -> Upload -> Valitse ohjelman luoma .kml tiedosto
-
-Klikkaa lisätyn tason yläpuolella 'Share' ja nimeä kartta -> valtuuta kaikki kenellä on linkki avaamaan kartta -> kopioi linkki alareunasta
+Klikkaa lisätyn tason yläpuolella **Share**, nimeä kartta, valtuuta kaikki
+linkin saaneet avaamaan kartta ja kopioi linkki alareunasta.
 
 Ohjelman poistaminen
 --------------------
 
-Package managerin avulla, tai cargolla (riippuen asennustavasta):
+Paketinhallinnan kautta:
+
+```bash
+sudo pacman -R metsavaluaatio-gui      # tai metsavaluaatio-gui-git
+brew uninstall metsavaluaatio-gui
+```
+
+Cargolla asennettuna:
+
 ```bash
 cargo uninstall metsaval
 ```

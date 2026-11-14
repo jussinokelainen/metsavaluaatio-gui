@@ -1,44 +1,61 @@
 //! Metsävaluuation graafinen käyttöliittymä.
 //!
 //! Ohjelma käyttää samoja `metsaval`-kirjaston moduuleja kuin komentorivityökalu,
-//! mutta hoitaa kyselyt ja tulosteet ikkunassa. Verkkohaku ja tiedostojen
+//! mutta hoitaa kyselyt ja tulosteet GPUI-ikkunassa. Verkkohaku ja tiedostojen
 //! kirjoitus ajetaan taustasäikeissä, jotta käyttöliittymä pysyy responsiivisena.
 
 mod pipeline;
 mod settings;
+mod text_input;
+mod ui;
 mod util;
 
+use std::collections::HashMap;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
-use eframe::egui;
-use egui_extras::{Column, TableBuilder};
+use gpui::{
+    AnyElement, App, Application, Bounds, Context, Div, Entity, FontWeight, Hsla, IntoElement,
+    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, rgb, size,
+};
 use metsaval::consts::Cutting;
 use metsaval::model::{SpeciesSummary, StandValue};
 
 use pipeline::{Options, Valuation};
+use text_input::TextInput;
+use ui::{
+    amber, bg, border, checkbox_row, green, input_bg, muted, panel, primary_button, red,
+    secondary_button, small_button, stat_card, tab_button, text,
+};
 
-const GREEN: egui::Color32 = egui::Color32::from_rgb(88, 214, 141);
-const RED: egui::Color32 = egui::Color32::from_rgb(255, 120, 120);
-const MUTED: egui::Color32 = egui::Color32::from_rgb(150, 155, 165);
+fn main() {
+    Application::new().run(|cx: &mut App| {
+        cx.bind_keys(text_input::key_bindings());
 
-fn main() -> eframe::Result {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size(egui::vec2(1120.0, 780.0))
-            .with_min_inner_size(egui::vec2(840.0, 560.0))
-            .with_title("Metsävaluaatio"),
-        ..Default::default()
-    };
+        let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_min_size: Some(size(px(840.), px(560.))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Metsävaluaatio".into()),
+                    ..Default::default()
+                }),
+                app_id: Some("metsaval".to_string()),
+                ..Default::default()
+            },
+            |_, cx| cx.new(MetsavalApp::new),
+        )
+        .expect("ikkunan avaaminen epäonnistui");
 
-    eframe::run_native(
-        "Metsävaluaatio",
-        options,
-        Box::new(|cc| Ok(Box::new(MetsavalApp::new(cc)))),
-    )
+        cx.activate(true);
+    });
 }
 
+/// Yläpalkin tilat.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Stands,
@@ -53,17 +70,18 @@ enum ExportMessage {
 
 struct MetsavalApp {
     // Asetukset
-    api_key: String,
+    api_key: Entity<TextInput>,
     show_api_key: bool,
-    municipalities: std::collections::HashMap<String, String>,
+    show_advanced: bool,
+    municipalities: HashMap<String, String>,
 
     // Hakukanavan kentät
-    property_id: String,
-    municipality_input: String,
+    property_id: Entity<TextInput>,
+    municipality_input: Entity<TextInput>,
     use_gpkg: bool,
-    gpkg_path: String,
-    gpkg_download_dir: String,
-    output_dir: String,
+    gpkg_path: Entity<TextInput>,
+    gpkg_download_dir: Entity<TextInput>,
+    output_dir: Entity<TextInput>,
 
     // Tila
     running: bool,
@@ -72,6 +90,7 @@ struct MetsavalApp {
     error: Option<String>,
     notice: Option<String>,
     logs: Vec<String>,
+    log_scroll: ScrollHandle,
     tab: Tab,
     exported: Vec<PathBuf>,
 
@@ -82,23 +101,30 @@ struct MetsavalApp {
 }
 
 impl MetsavalApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
-
-        let output_dir = dirs::download_dir()
+    fn new(cx: &mut Context<Self>) -> Self {
+        let api_key_text = settings::load_api_key().unwrap_or_default();
+        let output_dir_text = dirs::download_dir()
             .or_else(dirs::home_dir)
             .map(|path| path.display().to_string())
             .unwrap_or_default();
 
-        Self {
-            api_key: settings::load_api_key().unwrap_or_default(),
+        let api_key = cx.new(|cx| TextInput::new(cx, "MML API-avain", true));
+        api_key.update(cx, |input, cx| input.set_content(api_key_text.clone(), cx));
+
+        let output_dir = cx.new(|cx| TextInput::new(cx, "esim. ~/Downloads", false));
+        output_dir.update(cx, |input, cx| input.set_content(output_dir_text, cx));
+
+        let app = Self {
+            api_key,
             show_api_key: false,
+            show_advanced: api_key_text.trim().is_empty(),
             municipalities: settings::load_municipalities(),
-            property_id: String::new(),
-            municipality_input: String::new(),
+            property_id: cx.new(|cx| TextInput::new(cx, "esim. 740-555-2-4", false)),
+            municipality_input: cx.new(|cx| TextInput::new(cx, "Kunnan nimi", false)),
             use_gpkg: false,
-            gpkg_path: String::new(),
-            gpkg_download_dir: String::new(),
+            gpkg_path: cx.new(|cx| TextInput::new(cx, "/polku/MV_Kunta.gpkg", false)),
+            gpkg_download_dir: cx
+                .new(|cx| TextInput::new(cx, "oletus: järjestelmän väliaikaiskansio", false)),
             output_dir,
             running: false,
             exporting: false,
@@ -106,24 +132,63 @@ impl MetsavalApp {
             error: None,
             notice: None,
             logs: Vec::new(),
+            log_scroll: ScrollHandle::new(),
             tab: Tab::Stands,
             exported: Vec::new(),
             log_rx: None,
             done_rx: None,
             export_rx: None,
+        };
+
+        // Tekstikentät ovat omia GPUI-entiteettejään, joten niiden
+        // muutoksista pitää kertoa myös pää-näkymälle. Muuten esimerkiksi
+        // API-avaimen tila ja kunnan nimi eivät päivity kirjoittaessa.
+        for input in [
+            app.api_key.clone(),
+            app.property_id.clone(),
+            app.municipality_input.clone(),
+            app.gpkg_path.clone(),
+            app.gpkg_download_dir.clone(),
+            app.output_dir.clone(),
+        ] {
+            cx.observe(&input, |_, _, cx| cx.notify()).detach();
         }
+
+        app.start_background_poller(cx);
+        app
+    }
+
+    /// Taustasäikeiden kanavia pollataan säännöllisesti GPUI:n
+    /// foreground-executorissa.
+    fn start_background_poller(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                gpui::Timer::after(Duration::from_millis(100)).await;
+
+                let alive = this.update(cx, |this, cx| {
+                    if this.poll() {
+                        cx.notify();
+                    }
+                });
+
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// Tämänhetkinen kunta-koodi joko täydennetystä tai raa'asta tunnuksesta.
-    fn current_code(&self) -> Option<String> {
-        util::pad_property_id(&self.property_id)
+    fn current_code(&self, cx: &App) -> Option<String> {
+        util::pad_property_id(&input_text(cx, &self.property_id))
             .ok()
             .and_then(|padded| util::municipality_code(&padded))
-            .or_else(|| util::municipality_code(&self.property_id))
+            .or_else(|| util::municipality_code(&input_text(cx, &self.property_id)))
     }
 
     /// Käynnistää haun taustasäikeessä.
-    fn start_run(&mut self, ctx: &egui::Context) {
+    fn start_run(&mut self, cx: &mut Context<Self>) {
         if self.running {
             return;
         }
@@ -131,42 +196,46 @@ impl MetsavalApp {
         self.error = None;
         self.notice = None;
 
-        let api_key = self.api_key.trim().to_string();
+        let api_key = input_text(cx, &self.api_key);
         if api_key.is_empty() {
             self.error = Some(
                 "MML API-avain puuttuu. Lisää se vasemman paneelin Lisäasetukset-osiossa."
                     .to_string(),
             );
+            cx.notify();
             return;
         }
 
-        let padded = match util::pad_property_id(&self.property_id) {
+        let padded = match util::pad_property_id(&input_text(cx, &self.property_id)) {
             Ok(padded) => padded,
             Err(error) => {
                 self.error = Some(error.to_string());
+                cx.notify();
                 return;
             }
         };
         let code = util::municipality_code(&padded).unwrap_or_default();
 
         let gpkg_path = if self.use_gpkg {
-            let path = self.gpkg_path.trim();
+            let path = input_text(cx, &self.gpkg_path);
             if path.is_empty() {
                 self.error = Some("Anna käytettävän GeoPackagen polku.".to_string());
+                cx.notify();
                 return;
             }
-            Some(util::expand_path(path))
+            Some(util::expand_path(&path))
         } else {
             None
         };
+
         let municipality = if gpkg_path.is_some() {
             self.municipalities.get(&code).cloned()
         } else {
-            let typed = self.municipality_input.trim().to_string();
+            let typed = input_text(cx, &self.municipality_input);
             if !typed.is_empty() {
                 self.municipalities.insert(code.clone(), typed.clone());
                 settings::save_municipalities(&self.municipalities);
-                self.municipality_input.clear();
+                set_input(cx, &self.municipality_input, "");
                 Some(typed)
             } else if let Some(name) = self.municipalities.get(&code) {
                 Some(name.clone())
@@ -174,6 +243,7 @@ impl MetsavalApp {
                 self.error = Some(format!(
                     "Kunnalle {code} ei ole tallennettua nimeä. Kirjoita kunnan nimi."
                 ));
+                cx.notify();
                 return;
             }
         };
@@ -184,11 +254,11 @@ impl MetsavalApp {
         }
 
         let gpkg_download_dir = {
-            let path = self.gpkg_download_dir.trim();
+            let path = input_text(cx, &self.gpkg_download_dir);
             if path.is_empty() {
                 None
             } else {
-                Some(util::expand_path(path))
+                Some(util::expand_path(&path))
             }
         };
 
@@ -202,6 +272,7 @@ impl MetsavalApp {
 
         self.logs.clear();
         self.logs.push("Aloitetaan haku...".to_string());
+        self.log_scroll.scroll_to_bottom();
         self.result = None;
         self.exported.clear();
         self.running = true;
@@ -212,16 +283,16 @@ impl MetsavalApp {
         self.log_rx = Some(log_rx);
         self.done_rx = Some(done_rx);
 
-        let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = run_worker(options, log_tx);
             let _ = done_tx.send(result);
-            ctx.request_repaint();
         });
+
+        cx.notify();
     }
 
     /// Kirjoittaa Excel- ja KML-tiedostot valittuun kansioon.
-    fn start_export(&mut self, ctx: &egui::Context) {
+    fn start_export(&mut self, cx: &mut Context<Self>) {
         if self.exporting {
             return;
         }
@@ -229,11 +300,13 @@ impl MetsavalApp {
             return;
         };
 
-        let dir = util::expand_path(&self.output_dir);
-        if self.output_dir.trim().is_empty() {
+        let dir_text = input_text(cx, &self.output_dir);
+        if dir_text.is_empty() {
             self.error = Some("Anna tulostekansio.".to_string());
+            cx.notify();
             return;
         }
+        let dir = util::expand_path(&dir_text);
 
         let valuation = valuation.clone();
         let property_id = valuation.property_id.clone();
@@ -244,7 +317,6 @@ impl MetsavalApp {
         self.error = None;
         self.notice = None;
 
-        let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| -> color_eyre::Result<Vec<PathBuf>> {
                 std::fs::create_dir_all(&dir)?;
@@ -260,15 +332,22 @@ impl MetsavalApp {
                 Err(error) => ExportMessage::Error(format!("{error:#}")),
             };
             let _ = tx.send(message);
-            ctx.request_repaint();
         });
+
+        cx.notify();
     }
 
-    /// Lukee taustasäikeiden viestit.
-    fn poll(&mut self) {
+    /// Lukee taustasäikeiden viestit. Palauttaa `true`, jos tila muuttui.
+    fn poll(&mut self) -> bool {
+        let mut changed = false;
+
         if let Some(rx) = self.log_rx.take() {
             for line in rx.try_iter() {
                 self.logs.push(line);
+                changed = true;
+            }
+            if changed {
+                self.log_scroll.scroll_to_bottom();
             }
             self.log_rx = Some(rx);
         }
@@ -281,11 +360,13 @@ impl MetsavalApp {
                     self.log_rx = None;
                     self.tab = Tab::Stands;
                     self.notice = Some("Arvio valmis.".to_string());
+                    changed = true;
                 }
                 Ok(Err(error)) => {
                     self.error = Some(error);
                     self.running = false;
                     self.log_rx = None;
+                    changed = true;
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     self.done_rx = Some(rx);
@@ -294,6 +375,7 @@ impl MetsavalApp {
                     self.running = false;
                     self.log_rx = None;
                     self.error = Some("Taustatyö keskeytyi odottamatta.".to_string());
+                    changed = true;
                 }
             }
         }
@@ -304,10 +386,12 @@ impl MetsavalApp {
                     self.exported = paths;
                     self.exporting = false;
                     self.notice = Some("Tiedostot tallennettu.".to_string());
+                    changed = true;
                 }
                 Ok(ExportMessage::Error(error)) => {
                     self.exporting = false;
                     self.error = Some(error);
+                    changed = true;
                 }
                 Err(mpsc::TryRecvError::Empty) => {
                     self.export_rx = Some(rx);
@@ -315,394 +399,648 @@ impl MetsavalApp {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.exporting = false;
                     self.error = Some("Tiedostojen tallennus keskeytyi.".to_string());
+                    changed = true;
                 }
             }
         }
+
+        changed
     }
 
-    fn header(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            ui.heading("Metsävaluaatio");
-            ui.label(egui::RichText::new("metsäomaisuuden arviointi").color(MUTED));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.api_key.trim().is_empty() {
-                    ui.colored_label(egui::Color32::from_rgb(240, 180, 80), "API-avain puuttuu");
-                } else {
-                    ui.colored_label(GREEN, "API-avain asetettu");
-                }
-            });
-        });
-        ui.add_space(2.0);
+    fn header(&self, cx: &App) -> AnyElement {
+        let has_key = !input_text(cx, &self.api_key).is_empty();
+
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .h(px(58.))
+            .px_5()
+            .bg(panel())
+            .border_b_1()
+            .border_color(border())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(text())
+                            .child("Metsävaluaatio"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(muted())
+                            .child("metsäomaisuuden arviointi"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(12.))
+                    .text_color(if has_key { green() } else { amber() })
+                    .child(if has_key {
+                        "● API-avain asetettu"
+                    } else {
+                        "● API-avain puuttuu"
+                    }),
+            )
+            .into_any_element()
     }
 
-    fn form(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.add_space(6.0);
-        ui.heading("Haku");
-        ui.add_space(6.0);
+    fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let form = self.form(cx);
 
-        ui.label(egui::RichText::new("Kiinteistötunnus").strong());
-        ui.add(
-            egui::TextEdit::singleline(&mut self.property_id)
-                .hint_text("esim. 740-555-2-4")
-                .desired_width(f32::INFINITY),
-        );
+        div()
+            .flex()
+            .flex_col()
+            .h_full()
+            .w(px(360.))
+            .flex_shrink_0()
+            .bg(panel())
+            .border_r_1()
+            .border_color(border())
+            .child(
+                div()
+                    .id("sidebar-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .overflow_y_scroll()
+                    .p_4()
+                    .child(form),
+            )
+            .into_any_element()
+    }
 
-        ui.add_space(8.0);
-
-        let code = self.current_code();
+    fn form(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let code = self.current_code(cx);
         let known = code
             .as_ref()
             .and_then(|code| self.municipalities.get(code))
             .cloned();
-        ui.label(egui::RichText::new("Kunta").strong());
-        if self.use_gpkg {
-            ui.label(
-                egui::RichText::new("Käytetään valmista GeoPackagea, kuntaa ei tarvita")
-                    .color(MUTED),
-            );
-        } else if let Some(name) = known {
-            ui.label(format!("{name} ({})", code.unwrap_or_default()));
-        } else if let Some(code) = code {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.municipality_input)
-                    .hint_text(format!("Kunnan nimi koodille {code}"))
-                    .desired_width(f32::INFINITY),
-            );
-            ui.label(
-                egui::RichText::new("Nimi tallennetaan, jotta sitä ei kysytä uudelleen.")
-                    .color(MUTED),
-            );
+
+        let mut form = div().flex().flex_col().gap_3().w_full();
+
+        form = form
+            .child(section_title("Haku"))
+            .child(field_label("Kiinteistötunnus"))
+            .child(self.property_id.clone());
+
+        form = form.child(match (self.use_gpkg, known) {
+            (true, _) => muted_text("Käytetään valmista GeoPackagea, kuntaa ei tarvita."),
+            (false, Some(name)) => div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(field_label("Kunta"))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(text())
+                        .child(format!("{name} ({})", code.unwrap_or_default())),
+                )
+                .into_any_element(),
+            (false, None) => match code {
+                Some(code) => div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(field_label(format!("Kunta (koodi {code})")))
+                    .child(self.municipality_input.clone())
+                    .child(muted_text(
+                        "Nimi tallennetaan, jotta sitä ei kysytä uudelleen.",
+                    ))
+                    .into_any_element(),
+                None => muted_text("Syötä ensin kiinteistötunnus."),
+            },
+        });
+
+        // Lisäasetukset-kokonaisuus. GPUI:ssa ei ole valmista haitarikomponenttia,
+        // joten avaaminen hoidetaan omalla rivillä.
+        let advanced_label = if self.show_advanced {
+            "▾ Lisäasetukset"
         } else {
-            ui.label(egui::RichText::new("Syötä ensin kiinteistötunnus").color(MUTED));
+            "▸ Lisäasetukset"
+        };
+        form = form.child(
+            div()
+                .id("advanced-toggle")
+                .flex()
+                .items_center()
+                .gap_1()
+                .cursor_pointer()
+                .text_size(px(13.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(muted())
+                .hover(|style| style.text_color(text()))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_advanced = !this.show_advanced;
+                    cx.notify();
+                }))
+                .child(advanced_label),
+        );
+
+        if self.show_advanced {
+            let show_key = self.show_api_key;
+            let mut advanced = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(bg())
+                .border_1()
+                .border_color(border())
+                .rounded_md()
+                .child(field_label("MML API-avain"))
+                .child(self.api_key.clone())
+                .child(checkbox_row(
+                    "show-api-key",
+                    "Näytä avain",
+                    show_key,
+                    cx.listener(|this, _, _, cx| {
+                        this.show_api_key = !this.show_api_key;
+                        let masked = !this.show_api_key;
+                        this.api_key
+                            .update(cx, |input, cx| input.set_masked(masked, cx));
+                        cx.notify();
+                    }),
+                ))
+                .child(secondary_button(
+                    "save-api-key",
+                    "Tallenna avain",
+                    true,
+                    cx.listener(|this, _, _, cx| {
+                        let key = input_text(cx, &this.api_key);
+                        match settings::save_api_key(&key) {
+                            Ok(path) => {
+                                this.notice =
+                                    Some(format!("API-avain tallennettu: {}", path.display()));
+                                this.error = None;
+                            }
+                            Err(error) => {
+                                this.error =
+                                    Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
+                            }
+                        }
+                        cx.notify();
+                    }),
+                ))
+                .child(div().h(px(1.)).w_full().bg(border()))
+                .child(checkbox_row(
+                    "use-gpkg",
+                    "Käytä valmista GeoPackagea",
+                    self.use_gpkg,
+                    cx.listener(|this, _, _, cx| {
+                        this.use_gpkg = !this.use_gpkg;
+                        cx.notify();
+                    }),
+                ));
+
+            if self.use_gpkg {
+                advanced = advanced.child(self.gpkg_path.clone()).child(muted_text(
+                    "Vältä lataus, kun haet useita kiinteistöjä samasta kunnasta.",
+                ));
+            } else {
+                advanced = advanced
+                    .child(field_label("GeoPackagen latauskansio (valinnainen)"))
+                    .child(self.gpkg_download_dir.clone());
+            }
+
+            form = form.child(advanced);
         }
-
-        ui.add_space(10.0);
-
-        egui::CollapsingHeader::new("Lisäasetukset")
-            .default_open(self.api_key.trim().is_empty())
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("MML API-avain").strong());
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.api_key)
-                            .password(!self.show_api_key)
-                            .desired_width(180.0),
-                    );
-                    ui.checkbox(&mut self.show_api_key, "Näytä");
-                });
-                if ui.button("Tallenna avain").clicked() {
-                    match settings::save_api_key(&self.api_key) {
-                        Ok(path) => {
-                            self.notice =
-                                Some(format!("API-avain tallennettu: {}", path.display()));
-                            self.error = None;
-                        }
-                        Err(error) => {
-                            self.error =
-                                Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
-                        }
-                    }
-                }
-
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(4.0);
-
-                ui.checkbox(&mut self.use_gpkg, "Käytä valmista GeoPackagea");
-                if self.use_gpkg {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.gpkg_path)
-                            .hint_text("/polku/MV_Kunta.gpkg")
-                            .desired_width(f32::INFINITY),
-                    );
-                    ui.label(
-                        egui::RichText::new(
-                            "Vältä lataus, kun haet useita kiinteistöjä samasta kunnasta.",
-                        )
-                        .color(MUTED)
-                        .small(),
-                    );
-                } else {
-                    ui.label(
-                        egui::RichText::new("GeoPackagen latauskansio (valinnainen)").strong(),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.gpkg_download_dir)
-                            .hint_text("oletus: järjestelmän väliaikaiskansio")
-                            .desired_width(f32::INFINITY),
-                    );
-                }
-            });
-
-        ui.add_space(12.0);
 
         let button_text = if self.running {
             "Haetaan..."
         } else {
             "Hae arvio"
         };
-        let button = egui::Button::new(egui::RichText::new(button_text).strong());
-        if ui
-            .add_enabled(
-                !self.running,
-                button.min_size(egui::vec2(ui.available_width(), 36.0)),
-            )
-            .clicked()
-        {
-            self.start_run(ctx);
-        }
+        form = form.child(primary_button(
+            "run",
+            button_text,
+            !self.running,
+            cx.listener(|this, _, _, cx| this.start_run(cx)),
+        ));
 
         if self.running {
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(egui::RichText::new("Haetaan tietoja verkosta...").color(MUTED));
-            });
+            form = form.child(muted_text("Haetaan tietoja verkosta..."));
         }
 
         if let Some(notice) = &self.notice {
-            ui.add_space(6.0);
-            ui.colored_label(GREEN, notice);
+            form = form.child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(green())
+                    .child(notice.clone()),
+            );
         }
 
-        ui.add_space(16.0);
-        ui.separator();
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("Tulostekansio").strong());
-        ui.add(
-            egui::TextEdit::singleline(&mut self.output_dir)
-                .hint_text("esim. ~/Downloads")
-                .desired_width(f32::INFINITY),
-        );
-        ui.label(
-            egui::RichText::new("Excel- ja KML-tiedostot kirjoitetaan tähän kansioon.")
-                .color(MUTED)
-                .small(),
-        );
-
-        ui.add_space(12.0);
-        if ui
-            .add_enabled(
+        form = form
+            .child(div().h(px(1.)).w_full().bg(border()))
+            .child(field_label("Tulostekansio"))
+            .child(self.output_dir.clone())
+            .child(muted_text(
+                "Excel- ja KML-tiedostot kirjoitetaan tähän kansioon.",
+            ))
+            .child(secondary_button(
+                "export",
+                "Tallenna Excel + KML",
                 self.result.is_some() && !self.exporting && !self.running,
-                egui::Button::new("Tallenna Excel + KML")
-                    .min_size(egui::vec2(ui.available_width(), 32.0)),
-            )
-            .clicked()
-        {
-            self.start_export(ctx);
-        }
+                cx.listener(|this, _, _, cx| this.start_export(cx)),
+            ));
 
         if self.exporting {
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(egui::RichText::new("Kirjoitetaan tiedostoja...").color(MUTED));
-            });
+            form = form.child(muted_text("Kirjoitetaan tiedostoja..."));
         }
 
         if !self.exported.is_empty() {
-            ui.add_space(8.0);
+            let mut exported = div().flex().flex_col().gap_1();
             for path in &self.exported {
-                ui.horizontal(|ui| {
-                    ui.colored_label(GREEN, "✓");
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(path.display().to_string()).monospace(),
-                        )
-                        .wrap(),
-                    );
-                });
+                exported = exported.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_color(green()).child("✓"))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .text_size(px(11.))
+                                .font_family("monospace")
+                                .text_color(text())
+                                .child(path.display().to_string()),
+                        ),
+                );
             }
+            form = form.child(exported);
         }
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if ui.button("Google My Maps").clicked() {
-                metsaval::maps::open_browser("https://www.google.com/mymaps");
-            }
-            if ui.button("Avaa tulostekansio").clicked() {
-                metsaval::maps::open_browser(self.output_dir.trim());
-            }
-        });
+        form = form.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(small_button("open-mymaps", "Google My Maps", |_, _, _| {
+                    metsaval::maps::open_browser("https://www.google.com/mymaps");
+                }))
+                .child(small_button(
+                    "open-output",
+                    "Avaa tulostekansio",
+                    cx.listener(|this, _, _, cx| {
+                        let dir = input_text(cx, &this.output_dir);
+                        if !dir.is_empty() {
+                            metsaval::maps::open_browser(
+                                &util::expand_path(&dir).display().to_string(),
+                            );
+                        }
+                    }),
+                )),
+        );
+
+        form.into_any_element()
     }
 
-    fn welcome(&mut self, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
-            ui.add_space(48.0);
-            ui.heading("Metsäomaisuuden arvio");
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new(
-                    "Syötä kiinteistötunnus ja hae arvio. Ohjelma hakee kiinteistön rajat,\n\
-                     metsävarakuviot ja puustotiedot sekä laskee laskennallisen arvon.",
-                )
-                .color(MUTED),
-            );
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new(
-                    "Tulokset voi tallentaa Excel-yhteenvetona ja Google Maps -tasona (KML).",
-                )
-                .color(MUTED)
-                .small(),
-            );
-        });
-
-        ui.add_space(28.0);
-        ui.separator();
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("Tapahtumat").strong());
-        self.log_view(ui);
+    fn welcome(&self) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_5()
+            .bg(panel())
+            .border_1()
+            .border_color(border())
+            .rounded_lg()
+            .child(
+                div()
+                    .text_size(px(22.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(text())
+                    .child("Metsäomaisuuden arvio"),
+            )
+            .child(muted_text(
+                "Syötä kiinteistötunnus ja hae arvio. Ohjelma hakee kiinteistön rajat, \
+                 metsävarakuviot ja puustotiedot sekä laskee laskennallisen arvon.",
+            ))
+            .child(muted_text(
+                "Tulokset voi tallentaa Excel-yhteenvetona ja Google Maps -tasona (KML).",
+            ))
+            .into_any_element()
     }
 
-    fn content(&mut self, ui: &mut egui::Ui) {
-        if let Some(error) = self.error.clone() {
-            egui::Frame::group(ui.style())
-                .fill(egui::Color32::from_rgb(58, 24, 24))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 55, 55)))
-                .show(ui, |ui| {
-                    ui.add(egui::Label::new(egui::RichText::new(error).color(RED)).wrap());
-                });
-            ui.add_space(8.0);
+    fn content(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let mut root = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .gap_3()
+            .p_5()
+            .bg(bg());
+
+        let mut error_banner = None;
+        if let Some(error) = &self.error {
+            error_banner = Some(
+                div()
+                    .p_3()
+                    .bg(rgb(0x3a1818))
+                    .border_1()
+                    .border_color(rgb(0x963737))
+                    .rounded_md()
+                    .text_size(px(13.))
+                    .text_color(red())
+                    .child(error.clone())
+                    .into_any_element(),
+            );
         }
 
-        let Some(valuation) = self.result.take() else {
-            self.welcome(ui);
-            return;
+        if let Some(error) = error_banner {
+            root = root.child(error);
+        }
+
+        let Some(valuation) = self.result.as_ref() else {
+            return root
+                .child(self.welcome())
+                .child(section_title("Tapahtumat"))
+                .child(self.log_view())
+                .into_any_element();
         };
 
-        ui.horizontal(|ui| {
-            ui.heading(&valuation.property_id);
-            if let Some(name) = &valuation.municipality {
-                ui.label(egui::RichText::new(name).color(MUTED));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(format!(
+        root = root
+            .child(self.result_header(valuation))
+            .child(self.stats(valuation))
+            .child(self.tabs_row(cx));
+
+        root = root.child(match self.tab {
+            Tab::Stands => self.stands_table(cx),
+            Tab::Species => self.species_table(cx),
+            Tab::Log => self.log_view(),
+        });
+
+        root.into_any_element()
+    }
+
+    fn result_header(&self, valuation: &Valuation) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(22.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(text())
+                            .child(valuation.property_id.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(muted())
+                            .child(valuation.municipality.clone().unwrap_or_default()),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .justify_end()
+                    .text_size(px(11.))
+                    .text_color(muted())
+                    .child(format!(
                         "{} palstaa · {} · {}",
                         valuation.parcel_count,
                         valuation.stand_layer,
                         valuation.gpkg_path.display()
-                    ))
-                    .color(MUTED)
-                    .small(),
-                );
-            });
-        });
-
-        ui.add_space(6.0);
-        let net_color = if valuation.total_value() >= 0.0 {
-            GREEN
-        } else {
-            RED
-        };
-        ui.horizontal_wrapped(|ui| {
-            stat_card(
-                ui,
-                "Laskennallinen arvo",
-                &util::fmt_eur(valuation.total_value()),
-                net_color,
-            );
-            stat_card(
-                ui,
-                "Kiinteistön ala",
-                &format!("{} ha", util::fmt_fi(valuation.property_area_ha, 2)),
-                ui.visuals().text_color(),
-            );
-            stat_card(
-                ui,
-                "Kuvioiden ala",
-                &format!("{} ha", util::fmt_fi(valuation.totals.area_ha, 2)),
-                ui.visuals().text_color(),
-            );
-            stat_card(
-                ui,
-                "Puusto",
-                &format!("{} m³", util::fmt_fi(valuation.totals.volume_m3, 0)),
-                ui.visuals().text_color(),
-            );
-            stat_card(
-                ui,
-                "Tulot",
-                &util::fmt_eur(valuation.totals.income_eur),
-                ui.visuals().text_color(),
-            );
-            stat_card(
-                ui,
-                "Muuttuvat kulut",
-                &util::fmt_eur(valuation.totals.costs_eur),
-                ui.visuals().text_color(),
-            );
-            stat_card(
-                ui,
-                "Kiinteät kulut",
-                &util::fmt_eur(valuation.fixed_costs),
-                ui.visuals().text_color(),
-            );
-            stat_card(
-                ui,
-                "Kuvioita",
-                &valuation.totals.stand_count.to_string(),
-                ui.visuals().text_color(),
-            );
-        });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tab, Tab::Stands, "Kuviot");
-            ui.selectable_value(&mut self.tab, Tab::Species, "Puulajit");
-            ui.selectable_value(&mut self.tab, Tab::Log, "Loki");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Avaa Google My Maps").clicked() {
-                    metsaval::maps::open_browser("https://www.google.com/mymaps");
-                }
-            });
-        });
-        ui.separator();
-
-        match self.tab {
-            Tab::Stands => stands_table(ui, &valuation.stand_values),
-            Tab::Species => species_table(ui, &valuation.species_summary),
-            Tab::Log => self.log_view(ui),
-        }
-
-        self.result = Some(valuation);
+                    )),
+            )
+            .into_any_element()
     }
 
-    fn log_view(&self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                if self.logs.is_empty() {
-                    ui.label(egui::RichText::new("Ei tapahtumia.").color(MUTED));
-                }
-                for line in &self.logs {
-                    ui.monospace(line);
-                }
-            });
+    fn stats(&self, valuation: &Valuation) -> AnyElement {
+        let net_color = if valuation.total_value() >= 0.0 {
+            green()
+        } else {
+            red()
+        };
+        let neutral = text();
+
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .child(stat_card(
+                "Laskennallinen arvo",
+                util::fmt_eur(valuation.total_value()),
+                net_color,
+            ))
+            .child(stat_card(
+                "Kiinteistön ala",
+                format!("{} ha", util::fmt_fi(valuation.property_area_ha, 2)),
+                neutral,
+            ))
+            .child(stat_card(
+                "Kuvioiden ala",
+                format!("{} ha", util::fmt_fi(valuation.totals.area_ha, 2)),
+                neutral,
+            ))
+            .child(stat_card(
+                "Puusto",
+                format!("{} m³", util::fmt_fi(valuation.totals.volume_m3, 0)),
+                neutral,
+            ))
+            .child(stat_card(
+                "Tulot",
+                util::fmt_eur(valuation.totals.income_eur),
+                neutral,
+            ))
+            .child(stat_card(
+                "Muuttuvat kulut",
+                util::fmt_eur(valuation.totals.costs_eur),
+                neutral,
+            ))
+            .child(stat_card(
+                "Kiinteät kulut",
+                util::fmt_eur(valuation.fixed_costs),
+                neutral,
+            ))
+            .child(stat_card(
+                "Kuvioita",
+                valuation.totals.stand_count.to_string(),
+                neutral,
+            ))
+            .into_any_element()
+    }
+
+    fn tabs_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(tab_button(
+                "tab-stands",
+                "Kuviot",
+                self.tab == Tab::Stands,
+                cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Stands;
+                    cx.notify();
+                }),
+            ))
+            .child(tab_button(
+                "tab-species",
+                "Puulajit",
+                self.tab == Tab::Species,
+                cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Species;
+                    cx.notify();
+                }),
+            ))
+            .child(tab_button(
+                "tab-log",
+                "Loki",
+                self.tab == Tab::Log,
+                cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Log;
+                    cx.notify();
+                }),
+            ))
+            .child(div().flex_1())
+            .child(small_button(
+                "open-mymaps-result",
+                "Avaa Google My Maps",
+                |_, _, _| {
+                    metsaval::maps::open_browser("https://www.google.com/mymaps");
+                },
+            ))
+            .into_any_element()
+    }
+
+    fn log_view(&self) -> AnyElement {
+        div()
+            .id("log-scroll")
+            .flex()
+            .flex_col()
+            .gap_1()
+            .flex_1()
+            .min_h(px(0.))
+            .p_3()
+            .bg(panel())
+            .border_1()
+            .border_color(border())
+            .rounded_md()
+            .overflow_y_scroll()
+            .track_scroll(&self.log_scroll)
+            .when(self.logs.is_empty(), |view| {
+                view.child(muted_text("Ei tapahtumia."))
+            })
+            .children(
+                self.logs
+                    .iter()
+                    .map(|line| {
+                        div()
+                            .text_size(px(12.))
+                            .font_family("monospace")
+                            .text_color(text())
+                            .child(line.clone())
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .into_any_element()
+    }
+
+    fn stands_table(&self, cx: &mut Context<Self>) -> AnyElement {
+        let count = self
+            .result
+            .as_ref()
+            .map(|valuation| valuation.stand_values.len())
+            .unwrap_or(0);
+
+        if count == 0 {
+            return muted_text("Ei kuvioita.");
+        }
+
+        let rows = cx.processor(move |this, range: Range<usize>, _, _| {
+            let Some(valuation) = this.result.as_ref() else {
+                return Vec::new();
+            };
+            range
+                .filter_map(|index| {
+                    valuation
+                        .stand_values
+                        .get(index)
+                        .map(|value| stand_row(index, value))
+                })
+                .collect::<Vec<_>>()
+        });
+
+        table("stands", &STAND_COLUMNS, count, rows)
+    }
+
+    fn species_table(&self, cx: &mut Context<Self>) -> AnyElement {
+        let count = self
+            .result
+            .as_ref()
+            .map(|valuation| valuation.species_summary.len())
+            .unwrap_or(0);
+
+        if count == 0 {
+            return muted_text("Ei puulajitietoja.");
+        }
+
+        let rows = cx.processor(move |this, range: Range<usize>, _, _| {
+            let Some(valuation) = this.result.as_ref() else {
+                return Vec::new();
+            };
+            range
+                .filter_map(|index| {
+                    valuation
+                        .species_summary
+                        .get(index)
+                        .map(|value| species_row(index, value))
+                })
+                .collect::<Vec<_>>()
+        });
+
+        table("species", &SPECIES_COLUMNS, count, rows)
     }
 }
 
-impl eframe::App for MetsavalApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll();
+impl Render for MetsavalApp {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let header = self.header(cx);
+        let sidebar = self.sidebar(cx);
+        let content = self.content(cx);
 
-        let ctx = ui.ctx().clone();
-        if self.running || self.exporting {
-            ctx.request_repaint_after(Duration::from_millis(100));
-        }
-
-        egui::Panel::top("header").show(ui, |ui| self.header(ui));
-        egui::Panel::left("controls")
-            .resizable(false)
-            .default_size(340.0)
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| self.form(ui, &ctx));
-            });
-        egui::CentralPanel::default().show(ui, |ui| self.content(ui));
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(bg())
+            .text_size(px(13.))
+            .text_color(text())
+            .child(header)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(sidebar)
+                    .child(content),
+            )
     }
 }
 
@@ -719,14 +1057,328 @@ fn run_worker(options: Options, log_tx: Sender<String>) -> Result<Box<Valuation>
         .map_err(|error| format!("{error:#}"))
 }
 
-fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, color: egui::Color32) {
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.set_min_width(132.0);
-        ui.vertical(|ui| {
-            ui.label(egui::RichText::new(label).small().color(MUTED));
-            ui.label(egui::RichText::new(value).size(18.0).strong().color(color));
+fn input_text(cx: &App, input: &Entity<TextInput>) -> String {
+    input.read(cx).content().trim().to_string()
+}
+
+fn set_input(
+    cx: &mut Context<MetsavalApp>,
+    input: &Entity<TextInput>,
+    value: impl Into<SharedString>,
+) {
+    input.update(cx, |input, cx| input.set_content(value, cx));
+}
+
+fn section_title(title: impl Into<SharedString>) -> AnyElement {
+    div()
+        .text_size(px(15.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(text())
+        .child(title.into())
+        .into_any_element()
+}
+
+fn field_label(label: impl Into<SharedString>) -> AnyElement {
+    div()
+        .text_size(px(12.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(muted())
+        .child(label.into())
+        .into_any_element()
+}
+
+fn muted_text(message: impl Into<SharedString>) -> AnyElement {
+    div()
+        .text_size(px(12.))
+        .text_color(muted())
+        .child(message.into())
+        .into_any_element()
+}
+
+// ---------------------------------------------------------------------------
+// Taulukot
+// ---------------------------------------------------------------------------
+
+const ROW_HEIGHT: f32 = 26.0;
+
+/// Sarakkeen otsikko ja leveys. Leveys 0 tarkoittaa joustavaa saraketta.
+struct Column {
+    title: &'static str,
+    width: f32,
+    monospace: bool,
+}
+
+const STAND_COLUMNS: [Column; 8] = [
+    Column {
+        title: "Kuvio",
+        width: 60.0,
+        monospace: true,
+    },
+    Column {
+        title: "Hakkuu",
+        width: 110.0,
+        monospace: false,
+    },
+    Column {
+        title: "Ala, ha",
+        width: 70.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tilavuus m³/ha",
+        width: 95.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tukkia m³/ha",
+        width: 95.0,
+        monospace: true,
+    },
+    Column {
+        title: "Kuitua m³/ha",
+        width: 95.0,
+        monospace: true,
+    },
+    Column {
+        title: "Kasvu, %",
+        width: 70.0,
+        monospace: true,
+    },
+    Column {
+        title: "Netto, €",
+        width: 0.0,
+        monospace: false,
+    },
+];
+
+const SPECIES_COLUMNS: [Column; 7] = [
+    Column {
+        title: "Kuvio",
+        width: 70.0,
+        monospace: true,
+    },
+    Column {
+        title: "Puulaji",
+        width: 100.0,
+        monospace: false,
+    },
+    Column {
+        title: "Hakkuu",
+        width: 130.0,
+        monospace: false,
+    },
+    Column {
+        title: "Ikä, v",
+        width: 70.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tilavuus m³/ha",
+        width: 110.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tukkia m³/ha",
+        width: 110.0,
+        monospace: true,
+    },
+    Column {
+        title: "Arvo, €",
+        width: 0.0,
+        monospace: false,
+    },
+];
+
+fn table(
+    id: &'static str,
+    columns: &'static [Column],
+    count: usize,
+    rows: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
+) -> AnyElement {
+    let content_width: f32 = columns
+        .iter()
+        .map(|column| {
+            if column.width <= 0.0 {
+                100.0
+            } else {
+                column.width
+            }
+        })
+        .sum::<f32>()
+        + 16.0;
+
+    let list_id = SharedString::from(format!("{id}-list"));
+
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.))
+        .bg(panel())
+        .border_1()
+        .border_color(border())
+        .rounded_md()
+        .overflow_hidden()
+        .child(
+            div()
+                .id(id)
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.))
+                .overflow_x_scroll()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .min_w(px(content_width))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .h(px(30.))
+                                .px_2()
+                                .bg(input_bg())
+                                .border_b_1()
+                                .border_color(border())
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(muted())
+                                .children(columns.iter().map(|column| {
+                                    column_cell(column)
+                                        .text_size(px(11.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(muted())
+                                        .child(column.title)
+                                })),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_h(px(0.))
+                                .child(gpui::uniform_list(list_id, count, rows).flex_1()),
+                        ),
+                ),
+        )
+        .into_any_element()
+}
+
+fn column_cell(column: &Column) -> Div {
+    let cell = div()
+        .flex()
+        .items_center()
+        .h_full()
+        .px_2()
+        .overflow_hidden()
+        .whitespace_nowrap();
+
+    let cell = if column.monospace {
+        cell.font_family("monospace")
+    } else {
+        cell
+    };
+
+    if column.width <= 0.0 {
+        cell.flex_1().min_w(px(100.))
+    } else {
+        cell.flex_shrink_0().w(px(column.width))
+    }
+}
+
+fn monospace(value: impl Into<SharedString>, color: Hsla) -> Div {
+    div()
+        .text_size(px(12.))
+        .font_family("monospace")
+        .text_color(color)
+        .child(value.into())
+}
+
+fn text_cell(value: impl Into<SharedString>, color: Hsla) -> Div {
+    div()
+        .text_size(px(12.))
+        .text_color(color)
+        .child(value.into())
+}
+
+fn row_shell(index: usize) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .h(px(ROW_HEIGHT))
+        .px_2()
+        .border_b_1()
+        .border_color(border().opacity(0.45))
+        .when(index % 2 == 1, |row| row.bg(input_bg().opacity(0.35)))
+}
+
+fn stand_row(index: usize, value: &StandValue) -> AnyElement {
+    let net_color = if value.net_eur < 0.0 { red() } else { green() };
+    let area = value
+        .area
+        .map(|a| util::fmt_fi(a, 2))
+        .unwrap_or_else(|| "–".into());
+    let growth = value
+        .growth_pct
+        .map(|p| util::fmt_fi(p, 1))
+        .unwrap_or_else(|| "–".into());
+
+    let mut row = row_shell(index);
+
+    for column in &STAND_COLUMNS {
+        let cell = column_cell(column);
+        row = row.child(match column.title {
+            "Kuvio" => cell.child(monospace(
+                standtitle(value.standnumber, value.standid),
+                text(),
+            )),
+            "Hakkuu" => cell.child(text_cell(
+                cutting_text(value.cutting, value.cuttingproposalyear),
+                text(),
+            )),
+            "Ala, ha" => cell.child(monospace(area.clone(), text())),
+            "Tilavuus m³/ha" => cell.child(monospace(util::fmt_fi(value.volume, 1), text())),
+            "Tukkia m³/ha" => cell.child(monospace(util::fmt_fi(value.sawlogvolume, 1), text())),
+            "Kuitua m³/ha" => cell.child(monospace(util::fmt_fi(value.pulpwoodvolume, 1), text())),
+            "Kasvu, %" => cell.child(monospace(growth.clone(), text())),
+            _ => cell.child(text_cell(util::fmt_eur(value.net_eur), net_color)),
         });
-    });
+    }
+
+    row.into_any_element()
+}
+
+fn species_row(index: usize, value: &SpeciesSummary) -> AnyElement {
+    let age = value
+        .age
+        .map(|age| util::fmt_fi(age, 0))
+        .unwrap_or_else(|| "–".into());
+
+    let mut row = row_shell(index);
+
+    for column in &SPECIES_COLUMNS {
+        let cell = column_cell(column);
+        row = row.child(match column.title {
+            "Kuvio" => cell.child(monospace(
+                standtitle(value.standnumber, value.standid),
+                text(),
+            )),
+            "Puulaji" => cell.child(text_cell(value.species.name(), text())),
+            "Hakkuu" => cell.child(text_cell(
+                cutting_text(value.cutting, value.cuttingproposalyear),
+                text(),
+            )),
+            "Ikä, v" => cell.child(monospace(age.clone(), text())),
+            "Tilavuus m³/ha" => cell.child(monospace(util::fmt_fi(value.volume, 1), text())),
+            "Tukkia m³/ha" => cell.child(monospace(util::fmt_fi(value.sawlogvolume, 1), text())),
+            _ => cell.child(text_cell(util::fmt_eur(value.value_eur), green())),
+        });
+    }
+
+    row.into_any_element()
 }
 
 fn cutting_text(cutting: Option<Cutting>, year: Option<i64>) -> String {
@@ -742,156 +1394,6 @@ fn standtitle(standnumber: Option<i64>, standid: i64) -> String {
         Some(number) => number.to_string(),
         None => standid.to_string(),
     }
-}
-
-fn stands_table(ui: &mut egui::Ui, values: &[StandValue]) {
-    if values.is_empty() {
-        ui.label(egui::RichText::new("Ei kuvioita.").color(MUTED));
-        return;
-    }
-
-    let available = ui.available_height().max(120.0);
-    TableBuilder::new(ui)
-        .striped(true)
-        .resizable(true)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::auto().at_least(56.0))
-        .column(Column::auto().at_least(120.0))
-        .column(Column::auto().at_least(64.0))
-        .column(Column::auto().at_least(86.0))
-        .column(Column::auto().at_least(78.0))
-        .column(Column::auto().at_least(78.0))
-        .column(Column::auto().at_least(72.0))
-        .column(Column::remainder().at_least(90.0))
-        .max_scroll_height(available)
-        .header(24.0, |mut header| {
-            for title in [
-                "Kuvio",
-                "Hakkuu",
-                "Ala, ha",
-                "Tilavuus m³/ha",
-                "Tukkia m³/ha",
-                "Kuitua m³/ha",
-                "Kasvu, %",
-                "Netto, €",
-            ] {
-                header.col(|ui| {
-                    ui.strong(title);
-                });
-            }
-        })
-        .body(|body| {
-            body.rows(22.0, values.len(), |mut row| {
-                let value = &values[row.index()];
-                let is_negative = value.net_eur < 0.0;
-
-                row.col(|ui| {
-                    ui.monospace(standtitle(value.standnumber, value.standid));
-                });
-                row.col(|ui| {
-                    ui.label(cutting_text(value.cutting, value.cuttingproposalyear));
-                });
-                row.col(|ui| {
-                    ui.monospace(
-                        value
-                            .area
-                            .map(|a| util::fmt_fi(a, 2))
-                            .unwrap_or_else(|| "–".into()),
-                    );
-                });
-                row.col(|ui| {
-                    ui.monospace(util::fmt_fi(value.volume, 1));
-                });
-                row.col(|ui| {
-                    ui.monospace(util::fmt_fi(value.sawlogvolume, 1));
-                });
-                row.col(|ui| {
-                    ui.monospace(util::fmt_fi(value.pulpwoodvolume, 1));
-                });
-                row.col(|ui| {
-                    ui.monospace(
-                        value
-                            .growth_pct
-                            .map(|p| util::fmt_fi(p, 1))
-                            .unwrap_or_else(|| "–".into()),
-                    );
-                });
-                row.col(|ui| {
-                    ui.colored_label(
-                        if is_negative { RED } else { GREEN },
-                        util::fmt_eur(value.net_eur),
-                    );
-                });
-            });
-        });
-}
-
-fn species_table(ui: &mut egui::Ui, values: &[SpeciesSummary]) {
-    if values.is_empty() {
-        ui.label(egui::RichText::new("Ei puulajitietoja.").color(MUTED));
-        return;
-    }
-
-    let available = ui.available_height().max(120.0);
-    TableBuilder::new(ui)
-        .striped(true)
-        .resizable(true)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::auto().at_least(56.0))
-        .column(Column::auto().at_least(80.0))
-        .column(Column::auto().at_least(120.0))
-        .column(Column::auto().at_least(60.0))
-        .column(Column::auto().at_least(90.0))
-        .column(Column::auto().at_least(84.0))
-        .column(Column::remainder().at_least(90.0))
-        .max_scroll_height(available)
-        .header(24.0, |mut header| {
-            for title in [
-                "Kuvio",
-                "Puulaji",
-                "Hakkuu",
-                "Ikä, v",
-                "Tilavuus m³/ha",
-                "Tukkia m³/ha",
-                "Arvo, €",
-            ] {
-                header.col(|ui| {
-                    ui.strong(title);
-                });
-            }
-        })
-        .body(|body| {
-            body.rows(22.0, values.len(), |mut row| {
-                let value = &values[row.index()];
-
-                row.col(|ui| {
-                    ui.monospace(standtitle(value.standnumber, value.standid));
-                });
-                row.col(|ui| {
-                    ui.label(value.species.name());
-                });
-                row.col(|ui| {
-                    ui.label(cutting_text(value.cutting, value.cuttingproposalyear));
-                });
-                row.col(|ui| {
-                    ui.monospace(
-                        value
-                            .age
-                            .map(|age| util::fmt_fi(age, 0))
-                            .unwrap_or_else(|| "–".into()),
-                    );
-                });
-                row.col(|ui| {
-                    ui.monospace(util::fmt_fi(value.volume, 1));
-                });
-                row.col(|ui| {
-                    ui.monospace(util::fmt_fi(value.sawlogvolume, 1));
-                });
-                row.col(|ui| {
-                    ui.colored_label(GREEN, util::fmt_eur(value.value_eur));
-                });
-            });
-        });
 }
 
 #[cfg(test)]

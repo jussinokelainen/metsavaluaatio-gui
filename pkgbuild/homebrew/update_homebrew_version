@@ -1,35 +1,33 @@
 #!/usr/bin/env bash
 
-# This script can be used to update the metsavaluaatio.rb files in this directory,
-# and in the homebrew-metsavaluaatio repository which should be cloned into this
+# This script can be used to update the metsavaluaatio-gui.rb files in this directory,
+# and in the homebrew-metsavaluaatio-gui repository which should be cloned into this
 # directory.
 # The script takes the new version as an argument.
 #
 # Usage example, updating to version 1.2.3:
 # ./update_homebrew_version 1.2.3
 
-VERSION=$1
-shasum=$(curl -L https://github.com/jussinokelainen/metsavaluaatio/archive/refs/tags/"$VERSION".tar.gz | sha256sum)
-shasum=${shasum%% *}
-empty_shasum="d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed"
-if [[ "$shasum" == "$empty_shasum" ]]; then
-    printf "\e[31m404\e[0m: https://github.com/jussinokelainen/metsavaluaatio/archive/refs/tags/%s.tar.gz not found.\n" "$VERSION"
-    exit 1
-else
-    printf "New sha256sum: \e[32m%s\e[0m\n" "$shasum"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+REMOTE="ssh://git@gitlab.internal.nokehub.net:222/jussinokelainen/metsavaluaatio-gui.git"
+DEFAULT_VERSION=$(grep -m1 '^version' "$ROOT/Cargo.toml" | cut -d'"' -f2)
+VERSION=${1:-$DEFAULT_VERSION}
+FORMULA="$SCRIPT_DIR/metsavaluaatio-gui.rb"
+TAP="$SCRIPT_DIR/homebrew-metsavaluaatio/Formula"
+
+if ! git -C "$ROOT" rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+	echo "Varoitus: tagia $VERSION ei löytynyt paikallisesta reposta." >&2
 fi
 
-read -p "Update formula files? [y/n] " -r
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    exit 0
-fi
-
-cat <<EOF >metsavaluaatio.rb
-class Metsavaluaatio < Formula
-  desc "Työkalu metsän tietojen analysointiin"
-  homepage "https://github.com/jussinokelainen/metsavaluaatio"
-  url "https://github.com/jussinokelainen/metsavaluaatio/archive/refs/tags/$VERSION.tar.gz"
-  sha256 "$shasum"
+cat <<EOF >"$FORMULA"
+class MetsavaluaatioGui < Formula
+  desc "Metsäomaisuuden arviointi GPUI-työpöytäsovelluksella"
+  homepage "$REMOTE"
+  url "$REMOTE",
+      using: :git,
+      tag: "$VERSION"
+  version "$VERSION"
   license "AGPL-3.0-only"
 
   depends_on "rust" => :build
@@ -37,22 +35,34 @@ class Metsavaluaatio < Formula
   depends_on "sqlite"
 
   def install
-    system "cargo", "install", *std_cargo_args
+    system "cargo", "install", "--bin", "metsaval-gui", *std_cargo_args
   end
 end
 EOF
 
-cp ./metsavaluaatio.rb ./homebrew-metsavaluaatio/Formula/metsavaluaatio.rb
-echo "Formula files updated."
+echo "Generated $FORMULA (tag $VERSION)."
 
-message="Updated to version $VERSION"
-printf "Commit new metsavaluaatio.rb in homebrew-metsavaluaatio with message '\e[32m%s\e[0m'?" "$message"
-read -p " [y/n] " -r
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    exit 0
+if [[ -d "$TAP" ]]; then
+	cp "$FORMULA" "$TAP/metsavaluaatio-gui.rb"
+	echo "Copied formula to $TAP."
+else
+	echo "homebrew-metsavaluaatio checkout not found; skipping copy."
+	exit 0
 fi
 
-cd ./homebrew-metsavaluaatio/ || exit
-git add ./Formula/metsavaluaatio.rb
+if [[ ! -d "$SCRIPT_DIR/homebrew-metsavaluaatio/.git" ]]; then
+	exit 0
+fi
+
+message="Update metsavaluaatio-gui to $VERSION"
+read -p "Commit and push formula with message '$message'? [y/n] " -r
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+	exit 0
+fi
+
+cd "$SCRIPT_DIR/homebrew-metsavaluaatio"
+# Poista vanha CLI-formula, jotta tap sisältää vain GUI-sovelluksen.
+git rm --ignore-unmatch ./Formula/metsavaluaatio.rb >/dev/null 2>&1 || true
+git add ./Formula/metsavaluaatio-gui.rb
 git commit -m "$message"
 git push
