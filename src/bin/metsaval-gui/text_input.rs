@@ -720,3 +720,109 @@ impl Focusable for TextInput {
         self.focus_handle.clone()
     }
 }
+
+#[cfg(all(test, feature = "gui-test-support"))]
+mod gpui_tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    fn focused_input<'a>(
+        cx: &'a mut TestAppContext,
+        placeholder: &'static str,
+        masked: bool,
+    ) -> (gpui::Entity<TextInput>, &'a mut VisualTestContext) {
+        cx.update(|cx| cx.bind_keys(key_bindings()));
+
+        let (input, cx) = cx.add_window_view(|_, cx| TextInput::new(cx, placeholder, masked));
+        cx.update(|window, cx| {
+            let focus_handle = input.read(cx).focus_handle.clone();
+            window.focus(&focus_handle);
+            window.activate_window();
+        });
+
+        (input, cx)
+    }
+
+    #[gpui::test]
+    fn typing_inserts_text(cx: &mut TestAppContext) {
+        let (input, cx) = focused_input(cx, "kirjoita", false);
+
+        cx.simulate_input("abc");
+
+        input.update(cx, |input, _| assert_eq!(input.content(), "abc"));
+    }
+
+    #[gpui::test]
+    fn backspace_removes_the_last_character(cx: &mut TestAppContext) {
+        let (input, cx) = focused_input(cx, "kirjoita", false);
+
+        cx.simulate_input("abc");
+        cx.simulate_keystrokes("backspace");
+
+        input.update(cx, |input, _| assert_eq!(input.content(), "ab"));
+    }
+
+    #[gpui::test]
+    fn select_all_then_typing_replaces_the_content(cx: &mut TestAppContext) {
+        let (input, cx) = focused_input(cx, "kirjoita", false);
+        let select_all = if cfg!(target_os = "macos") {
+            "cmd-a"
+        } else {
+            "ctrl-a"
+        };
+
+        cx.simulate_input("vanha");
+        cx.simulate_keystrokes(select_all);
+        cx.simulate_input("uusi");
+
+        input.update(cx, |input, _| assert_eq!(input.content(), "uusi"));
+    }
+
+    #[gpui::test]
+    fn left_arrow_moves_the_insertion_point(cx: &mut TestAppContext) {
+        let (input, cx) = focused_input(cx, "kirjoita", false);
+
+        cx.simulate_input("ac");
+        cx.simulate_keystrokes("left");
+        cx.simulate_input("b");
+
+        input.update(cx, |input, _| assert_eq!(input.content(), "abc"));
+    }
+
+    #[gpui::test]
+    fn clipboard_paste_inserts_text(cx: &mut TestAppContext) {
+        let (input, cx) = focused_input(cx, "kirjoita", false);
+        let paste = if cfg!(target_os = "macos") {
+            "cmd-v"
+        } else {
+            "ctrl-v"
+        };
+
+        cx.write_to_clipboard(ClipboardItem::new_string("liitetty".to_string()));
+        cx.simulate_keystrokes(paste);
+
+        input.update(cx, |input, _| assert_eq!(input.content(), "liitetty"));
+    }
+
+    #[gpui::test]
+    fn masked_input_keeps_the_real_content(cx: &mut TestAppContext) {
+        let (input, cx) = focused_input(cx, "salainen", true);
+
+        cx.simulate_input("abc");
+
+        input.update(cx, |input, _| {
+            assert_eq!(input.content(), "abc");
+            assert_eq!(input.display_text().as_ref(), "•••");
+        });
+    }
+
+    #[gpui::test]
+    fn set_content_places_the_cursor_at_the_end(cx: &mut TestAppContext) {
+        let (input, cx) = focused_input(cx, "kirjoita", false);
+
+        input.update(cx, |input, cx| input.set_content("valmis", cx));
+        cx.simulate_input("!");
+
+        input.update(cx, |input, _| assert_eq!(input.content(), "valmis!"));
+    }
+}

@@ -53,6 +53,28 @@ pub fn municipality_code(property_id: &str) -> Option<String> {
     }
 }
 
+/// Kiinteistötunnuksen kuntakoodi joko täydennetystä tai raa'asta
+/// tunnuksesta. Täydennetty tunnus on ensisijainen, koska se normalisoi
+/// kuntakoodin pituuden.
+pub fn property_code(property_id: &str) -> Option<String> {
+    pad_property_id(property_id)
+        .ok()
+        .and_then(|padded| municipality_code(&padded))
+        .or_else(|| municipality_code(property_id))
+}
+
+/// Lisää kuntakoodin alkuun nollia, jos sen pituus on alle 3, jotta
+/// kuntamuisti toimii riippumatta siitä, syöttääkö käyttäjä nollia koodin
+/// alkuun vai ei.
+pub fn pad_municipality_code(code: Option<String>) -> Option<String> {
+    let code = code?;
+    if code.chars().count() == 3 {
+        Some(code)
+    } else {
+        Some(format!("{:0>3}", code))
+    }
+}
+
 /// Generoi ohjelman tuottamille tiedostoille nimen (sama kuin CLI:ssä).
 pub fn generate_filename(property_id: &str, suffix: &str) -> String {
     let mut time = Local::now().trunc_subsecs(0).to_rfc3339().replace(':', "-");
@@ -144,6 +166,43 @@ mod tests {
         );
         assert_eq!(municipality_code("12-345-6-789").as_deref(), Some("12"));
         assert_eq!(municipality_code("  "), None);
+    }
+
+    #[test]
+    fn property_code_uses_the_padded_identifier_first() {
+        assert_eq!(property_code("740-555-2-4").as_deref(), Some("740"));
+        assert_eq!(property_code("12-345-6-789").as_deref(), Some("012"));
+        assert_eq!(property_code("1-2-3-4").as_deref(), Some("001"));
+    }
+
+    #[test]
+    fn property_code_falls_back_to_the_raw_identifier() {
+        assert_eq!(property_code("740").as_deref(), Some("740"));
+        assert_eq!(property_code(" 740 ").as_deref(), Some("740"));
+        assert_eq!(property_code(""), None);
+        assert_eq!(property_code("   "), None);
+    }
+
+    #[test]
+    fn municipality_codes_are_padded_to_three_characters() {
+        assert_eq!(pad_municipality_code(None), None);
+        assert_eq!(
+            pad_municipality_code(Some("1".to_string())).as_deref(),
+            Some("001")
+        );
+        assert_eq!(
+            pad_municipality_code(Some("12".to_string())).as_deref(),
+            Some("012")
+        );
+        assert_eq!(
+            pad_municipality_code(Some("740".to_string())).as_deref(),
+            Some("740")
+        );
+        // Pidempiä koodeja ei katkaista.
+        assert_eq!(
+            pad_municipality_code(Some("1234".to_string())).as_deref(),
+            Some("1234")
+        );
     }
 
     #[test]

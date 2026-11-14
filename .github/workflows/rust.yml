@@ -32,3 +32,5 @@ jobs:
       run: cargo build --verbose --bin metsaval-gui
     - name: Run tests
       run: cargo test --verbose
+    - name: Run GUI interaction tests
+      run: cargo test --verbose --features gui-test-support --bin metsaval-gui

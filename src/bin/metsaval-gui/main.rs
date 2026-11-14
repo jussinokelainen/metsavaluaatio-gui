@@ -4,11 +4,14 @@
 //! mutta hoitaa kyselyt ja tulosteet GPUI-ikkunassa. Verkkohaku ja tiedostojen
 //! kirjoitus ajetaan taustasäikeissä, jotta käyttöliittymä pysyy responsiivisena.
 
+mod form;
 mod pipeline;
 mod settings;
 mod text_input;
 mod ui;
 mod util;
+
+use form::{RunForm, prepare_run};
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -181,22 +184,7 @@ impl MetsavalApp {
 
     /// Tämänhetkinen kunta-koodi joko täydennetystä tai raa'asta tunnuksesta.
     fn current_code(&self, cx: &App) -> Option<String> {
-        util::pad_property_id(&input_text(cx, &self.property_id))
-            .ok()
-            .and_then(|padded| util::municipality_code(&padded))
-            .or_else(|| util::municipality_code(&input_text(cx, &self.property_id)))
-    }
-
-    /// Lisää kuntakoodin alkuun nollia jos sen pituus on alle 3, jotta
-    /// kuntamuisti toimii riippumatta syöttääkö käyttäjä nollia koodin alkuun
-    /// vai ei
-    fn pad_municipality_code(&self, code: Option<String>) -> Option<String> {
-        let Some(code) = code else { return None };
-        if code.chars().count() == 3 {
-            Some(code)
-        } else {
-            Some(format!("{:0>3}", code))
-        }
+        util::property_code(&input_text(cx, &self.property_id))
     }
 
     /// Käynnistää haun taustasäikeessä.
@@ -208,78 +196,40 @@ impl MetsavalApp {
         self.error = None;
         self.notice = None;
 
-        let api_key = input_text(cx, &self.api_key);
-        if api_key.is_empty() {
-            self.error = Some(
-                "MML API-avain puuttuu. Lisää se vasemman paneelin Lisäasetukset-osiossa."
-                    .to_string(),
-            );
-            cx.notify();
-            return;
+        let form = RunForm {
+            api_key: input_text(cx, &self.api_key),
+            property_id: input_text(cx, &self.property_id),
+            municipality_input: input_text(cx, &self.municipality_input),
+            use_gpkg: self.use_gpkg,
+            gpkg_path: input_text(cx, &self.gpkg_path),
+            gpkg_download_dir: input_text(cx, &self.gpkg_download_dir),
+        };
+
+        let prepared = match prepare_run(&form, &mut self.municipalities) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+
+        if prepared.municipality_added {
+            settings::save_municipalities(&self.municipalities);
+            set_input(cx, &self.municipality_input, "");
         }
 
-        let padded = match util::pad_property_id(&input_text(cx, &self.property_id)) {
-            Ok(padded) => padded,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                cx.notify();
-                return;
-            }
-        };
-        let code = util::municipality_code(&padded).unwrap_or_default();
-
-        let gpkg_path = if self.use_gpkg {
-            let path = input_text(cx, &self.gpkg_path);
-            if path.is_empty() {
-                self.error = Some("Anna käytettävän GeoPackagen polku.".to_string());
-                cx.notify();
-                return;
-            }
-            Some(util::expand_path(&path))
-        } else {
-            None
-        };
-
-        let municipality = if gpkg_path.is_some() {
-            self.municipalities.get(&code).cloned()
-        } else {
-            let typed = input_text(cx, &self.municipality_input);
-            if !typed.is_empty() {
-                self.municipalities.insert(code.clone(), typed.clone());
-                settings::save_municipalities(&self.municipalities);
-                set_input(cx, &self.municipality_input, "");
-                Some(typed)
-            } else if let Some(name) = self.municipalities.get(&code) {
-                Some(name.clone())
-            } else {
-                self.error = Some(format!(
-                    "Kunnalle {code} ei ole tallennettua nimeä. Kirjoita kunnan nimi."
-                ));
-                cx.notify();
-                return;
-            }
-        };
-
         // Tallennetaan avain, jotta sitä ei tarvitse syöttää uudelleen.
-        if let Err(error) = settings::save_api_key(&api_key) {
+        if let Err(error) = settings::save_api_key(&prepared.api_key) {
             self.notice = Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
         }
 
-        let gpkg_download_dir = {
-            let path = input_text(cx, &self.gpkg_download_dir);
-            if path.is_empty() {
-                None
-            } else {
-                Some(util::expand_path(&path))
-            }
-        };
-
         let options = Options {
-            property_id: padded,
-            api_key,
-            municipality,
-            gpkg_path,
-            gpkg_download_dir,
+            property_id: prepared.property_id,
+            api_key: prepared.api_key,
+            municipality: prepared.municipality,
+            gpkg_path: prepared.gpkg_path,
+            gpkg_download_dir: prepared.gpkg_download_dir,
         };
 
         self.logs.clear();
@@ -493,7 +443,7 @@ impl MetsavalApp {
     }
 
     fn form(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let code = self.pad_municipality_code(self.current_code(cx));
+        let code = util::pad_municipality_code(self.current_code(cx));
         let known = code
             .as_ref()
             .and_then(|code| self.municipalities.get(code))

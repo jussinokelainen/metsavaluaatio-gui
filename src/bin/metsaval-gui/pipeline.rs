@@ -18,6 +18,7 @@ use proj::Proj;
 use crate::util;
 
 /// Käyttäjän valinnat yhdelle arvioinnille.
+#[derive(Debug, Clone)]
 pub struct Options {
     pub property_id: String,
     pub api_key: String,
