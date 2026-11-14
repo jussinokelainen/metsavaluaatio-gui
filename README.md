@@ -20,8 +20,9 @@ makepkg -si
 
 ```bash
 brew tap jussinokelainen/metsavaluaatio
-brew install metsavaluaatio-gui
+brew install --cask metsavaluaatio-gui
 ```
+HUOM! Asennus poistaa .app tiedostosta com.apple.quarantine attribuutin.
 
 #### Cargo
 

@@ -50,4 +50,17 @@ build() {
 package() {
 	cd "$pkgname-$pkgver"
 	install -Dm755 target/release/metsaval-gui "$pkgdir/usr/bin/metsaval-gui"
+
+	# Install .desktop file
+	install -Dm644 /dev/stdin \
+		"$pkgdir/usr/share/applications/metsavaluaatio.desktop" <<EOF
+[Desktop Entry]
+Name=Metsävaluaatio
+GenericName=Metsäomaisuuden arviointi
+Comment=Metsäomaisuuden arviointi GPUI-työpöytäsovelluksella
+Exec=metsaval-gui
+Terminal=false
+Type=Application
+Categories=Office;Finance;
+EOF
 }
