@@ -52,8 +52,6 @@ cmake
 sqlite
 ```
 
-macOS:lla tarvitaan lisäksi Xcode Command Line Tools GPUI:n Metal-käännökseen.
-
 Linuxissa graafinen sovellus tarvitsee lisäksi X11- tai Wayland-ympäristön,
 `libxkbcommon`- ja `libxkbcommon-x11`-kirjastot, XCB- ja freetype-tuen,
 fontconfig-pohjaisen fonttituen sekä Vulkan-ajurin. GPUI piirtää
