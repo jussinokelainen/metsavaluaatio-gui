@@ -1,16 +1,9 @@
 METSÄVALUAATIO-GUI
 ===================
 
+GUI versio Metsävaluaatio ohjelmasta.
+
 CLI Versio: https://github.com/jussinokelainen/metsavaluaatio
-
-Metsäomaisuuden arviointiin tarkoitettu GPUI-pohjainen työpöytäsovellus.
-Ohjelma hakee kiinteistön rajat, metsävarakuviot ja puustotiedot sekä laskee
-laskennallisen arvon. Tulokset voi tallentaa Excel-yhteenvetona ja Google Maps
--tasona (KML).
-
-Tämä repo on graafisen käyttöliittymän haara. Paketit asentavat vain
-`metsaval-gui`-sovelluksen; repossa mukana oleva jaettu laskentakirjasto ja
-alkuperäinen komentorivityökalu eivät kuulu asennettaviin paketteihin.
 
 Asennus
 -------
@@ -18,15 +11,9 @@ Asennus
 #### Arch Linux
 
 ```bash
-git clone ssh://git@gitlab.internal.nokehub.net:222/jussinokelainen/metsavaluaatio-gui.git
+git clone git@github.com:jussinokelainen/metsavaluaatio-gui.git
 cd metsavaluaatio-gui/pkgbuild/arch
 makepkg -si
-```
-
-Uusinta git-committia seuraava paketti:
-
-```bash
-makepkg -si -p PKGBUILD-git
 ```
 
 #### macOS (homebrew)
@@ -51,10 +38,6 @@ tiedostoon:
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-Ei-git-paketit (`PKGBUILD` ja Homebrew-formula) rakennetaan versiontagista.
-Tagin tulee vastata `Cargo.toml`-tiedoston versiota, esimerkiksi `0.1.0`.
-Uusinta committia seuraava Arch-paketti on `PKGBUILD-git`.
-
 ##### Riippuvuudet
 
 ```bash
@@ -69,8 +52,6 @@ Linuxissa graafinen sovellus tarvitsee lisäksi X11- tai Wayland-ympäristön,
 `libxkbcommon`- ja `libxkbcommon-x11`-kirjastot, XCB- ja freetype-tuen,
 fontconfig-pohjaisen fonttituen sekä Vulkan-ajurin. GPUI piirtää
 `blade`-renderöijällä.
-
-Paketit listaavat tarvittavat järjestelmäriippuvuudet automaattisesti.
 
 Käyttö
 ------
@@ -116,12 +97,7 @@ linkin saaneet avaamaan kartta ja kopioi linkki alareunasta.
 Ohjelman poistaminen
 --------------------
 
-Paketinhallinnan kautta:
-
-```bash
-sudo pacman -R metsavaluaatio-gui      # tai metsavaluaatio-gui-git
-brew uninstall metsavaluaatio-gui
-```
+Paketinhallinnan kautta tai
 
 Cargolla asennettuna:
 
