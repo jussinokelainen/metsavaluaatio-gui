@@ -395,23 +395,13 @@ impl MetsavalApp {
             .border_b_1()
             .border_color(border())
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(px(20.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(text())
-                            .child("Metsävaluaatio"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .text_color(muted())
-                            .child("metsäomaisuuden arviointi"),
-                    ),
+                div().flex().items_center().gap_3().child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(text())
+                        .child("Metsävaluaatio"),
+                ),
             )
             .child(
                 div()
