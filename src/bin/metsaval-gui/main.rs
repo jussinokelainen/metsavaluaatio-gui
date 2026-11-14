@@ -187,6 +187,18 @@ impl MetsavalApp {
             .or_else(|| util::municipality_code(&input_text(cx, &self.property_id)))
     }
 
+    /// Lisää kuntakoodin alkuun nollia jos sen pituus on alle 3, jotta
+    /// kuntamuisti toimii riippumatta syöttääkö käyttäjä nollia koodin alkuun
+    /// vai ei
+    fn pad_municipality_code(&self, code: Option<String>) -> Option<String> {
+        let Some(code) = code else { return None };
+        if code.chars().count() == 3 {
+            Some(code)
+        } else {
+            Some(format!("{:0>3}", code))
+        }
+    }
+
     /// Käynnistää haun taustasäikeessä.
     fn start_run(&mut self, cx: &mut Context<Self>) {
         if self.running {
@@ -481,7 +493,7 @@ impl MetsavalApp {
     }
 
     fn form(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let code = self.current_code(cx);
+        let code = self.pad_municipality_code(self.current_code(cx));
         let known = code
             .as_ref()
             .and_then(|code| self.municipalities.get(code))
