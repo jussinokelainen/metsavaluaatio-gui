@@ -1191,13 +1191,13 @@ const SPECIES_COLUMNS: [Column; 13] = [
         monospace: true,
     },
     Column {
-        title: "Tulot, €",
+        title: "Arvokasvu, %",
         width: 70.0,
         monospace: false,
     },
     Column {
-        title: "Arvokasvu, %",
-        width: 0.0,
+        title: "Tulot, €",
+        width: 70.0,
         monospace: false,
     },
 ];
@@ -1400,8 +1400,8 @@ fn species_row(index: usize, value: &SpeciesSummary) -> AnyElement {
             "Tukkia m³/ha" => cell.child(monospace(util::fmt_fi(value.sawlogvolume, 1), text())),
             "Kuitua m³/ha" => cell.child(monospace(util::fmt_fi(value.pulpwoodvolume, 1), text())),
             "Tilavuuskasvu, %" => cell.child(monospace(util::fmt_pct(value.growth_pct), text())),
-            "Tulot, €" => cell.child(text_cell(util::fmt_eur(value.value_eur), green())),
-            _ => cell.child(text_cell(util::fmt_pct(value.value_growth_pct), text())),
+            "Arvokasvu, %" => cell.child(text_cell(util::fmt_pct(value.value_growth_pct), text())),
+            _ => cell.child(text_cell(util::fmt_eur(value.value_eur), green())),
         });
     }
 
