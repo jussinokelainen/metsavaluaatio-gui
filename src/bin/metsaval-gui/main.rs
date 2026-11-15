@@ -1073,7 +1073,7 @@ struct Column {
     monospace: bool,
 }
 
-const STAND_COLUMNS: [Column; 8] = [
+const STAND_COLUMNS: [Column; 11] = [
     Column {
         title: "Kuvio",
         width: 60.0,
@@ -1081,9 +1081,17 @@ const STAND_COLUMNS: [Column; 8] = [
     },
     Column {
         title: "Hakkuu",
-        width: 110.0,
+        width: 125.0,
         monospace: false,
     },
+    // Keski-ikä ?
+    Column {
+        title: "Runkoluku, kpl/ha",
+        width: 105.0,
+        monospace: true,
+    },
+    // Keskiläpimitta?
+    // Keskipituus?
     Column {
         title: "Ala, ha",
         width: 70.0,
@@ -1110,13 +1118,23 @@ const STAND_COLUMNS: [Column; 8] = [
         monospace: true,
     },
     Column {
+        title: "Tulot, €",
+        width: 70.0,
+        monospace: false,
+    },
+    Column {
+        title: "Menot, €",
+        width: 70.0,
+        monospace: false,
+    },
+    Column {
         title: "Netto, €",
         width: 0.0,
         monospace: false,
     },
 ];
 
-const SPECIES_COLUMNS: [Column; 7] = [
+const SPECIES_COLUMNS: [Column; 11] = [
     Column {
         title: "Kuvio",
         width: 70.0,
@@ -1138,6 +1156,13 @@ const SPECIES_COLUMNS: [Column; 7] = [
         monospace: true,
     },
     Column {
+        title: "Runkoluku, kpl/ha",
+        width: 105.0,
+        monospace: true,
+    },
+    // Keskiläpimitta?
+    // Keskipituus?
+    Column {
         title: "Tilavuus m³/ha",
         width: 110.0,
         monospace: true,
@@ -1148,7 +1173,22 @@ const SPECIES_COLUMNS: [Column; 7] = [
         monospace: true,
     },
     Column {
-        title: "Arvo, €",
+        title: "Kuitua m³/ha",
+        width: 110.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tilavuuskasvu, %",
+        width: 110.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tulot, €",
+        width: 70.0,
+        monospace: false,
+    },
+    Column {
+        title: "Arvokasvu, %",
         width: 0.0,
         monospace: false,
     },
@@ -1304,11 +1344,17 @@ fn stand_row(index: usize, value: &StandValue) -> AnyElement {
                 cutting_text(value.cutting, value.cuttingproposalyear),
                 text(),
             )),
+            "Runkoluku, kpl/ha" => cell.child(monospace(
+                util::fmt_fi(value.stemcount.unwrap_or(0.0), 0),
+                text(),
+            )),
             "Ala, ha" => cell.child(monospace(area.clone(), text())),
             "Tilavuus m³/ha" => cell.child(monospace(util::fmt_fi(value.volume, 1), text())),
             "Tukkia m³/ha" => cell.child(monospace(util::fmt_fi(value.sawlogvolume, 1), text())),
             "Kuitua m³/ha" => cell.child(monospace(util::fmt_fi(value.pulpwoodvolume, 1), text())),
             "Kasvu, %" => cell.child(monospace(growth.clone(), text())),
+            "Tulot, €" => cell.child(monospace(util::fmt_eur(value.income_eur), text())),
+            "Menot, €" => cell.child(monospace(util::fmt_eur(value.costs_eur), text())),
             _ => cell.child(text_cell(util::fmt_eur(value.net_eur), net_color)),
         });
     }
@@ -1320,6 +1366,10 @@ fn species_row(index: usize, value: &SpeciesSummary) -> AnyElement {
     let age = value
         .age
         .map(|age| util::fmt_fi(age, 0))
+        .unwrap_or_else(|| "–".into());
+    let growth = value
+        .growth_pct
+        .map(|p| util::fmt_fi(p, 1))
         .unwrap_or_else(|| "–".into());
 
     let mut row = row_shell(index);
@@ -1337,9 +1387,16 @@ fn species_row(index: usize, value: &SpeciesSummary) -> AnyElement {
                 text(),
             )),
             "Ikä, v" => cell.child(monospace(age.clone(), text())),
+            "Runkoluku, kpl/ha" => cell.child(monospace(util::fmt_fi(value.stemcount, 0), text())),
             "Tilavuus m³/ha" => cell.child(monospace(util::fmt_fi(value.volume, 1), text())),
             "Tukkia m³/ha" => cell.child(monospace(util::fmt_fi(value.sawlogvolume, 1), text())),
-            _ => cell.child(text_cell(util::fmt_eur(value.value_eur), green())),
+            "Kuitua m³/ha" => cell.child(monospace(util::fmt_fi(value.pulpwoodvolume, 1), text())),
+            "Tilavuuskasvu, %" => cell.child(monospace(growth.clone(), text())),
+            "Tulot, €" => cell.child(text_cell(util::fmt_eur(value.value_eur), green())),
+            _ => cell.child(text_cell(
+                util::fmt_fi(value.value_growth_pct.unwrap_or(0.0), 1),
+                text(),
+            )),
         });
     }
 
