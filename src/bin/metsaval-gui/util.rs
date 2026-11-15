@@ -123,6 +123,14 @@ pub fn fmt_eur(value: f64) -> String {
     format!("{} €", fmt_fi(value, 0))
 }
 
+/// Prosentit merkin kanssa
+pub fn fmt_pct(value: Option<f64>) -> String {
+    match value {
+        Some(v) => format!("{} %", fmt_fi(v, 1)),
+        None => String::from("-"),
+    }
+}
+
 /// Kartalla näytettävä puulajin nimi koodista.
 #[allow(dead_code)]
 pub fn species_name(code: Option<i64>) -> &'static str {
