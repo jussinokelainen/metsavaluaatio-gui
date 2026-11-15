@@ -27,7 +27,7 @@ makepkg -si
 brew tap jussinokelainen/metsavaluaatio
 brew install --cask metsavaluaatio-gui
 ```
-HUOM! Asennus poistaa .app tiedostosta com.apple.quarantine attribuutin.
+HUOM! Asennus poistaa Metsavaluaatio.app tiedostosta com.apple.quarantine attribuutin.
 
 #### Cargo
 
@@ -52,10 +52,7 @@ cmake
 sqlite
 ```
 
-Linuxissa graafinen sovellus tarvitsee lisäksi X11- tai Wayland-ympäristön,
-`libxkbcommon`- ja `libxkbcommon-x11`-kirjastot, XCB- ja freetype-tuen,
-fontconfig-pohjaisen fonttituen sekä Vulkan-ajurin. GPUI piirtää
-`blade`-renderöijällä.
+Ohjelman käyttäminen vaatii myös graafisen käyttöliittymän.
 
 Käyttö
 ------
@@ -68,25 +65,16 @@ tallennetaan tiedostoon:
 ~/.config/metsavaluaatio/config.toml
 ```
 
-Käynnistyksen jälkeen:
+Kun API-avain on olemassa:
 
-1. Syötä kiinteistötunnus, esimerkiksi `740-555-2-4`.
+1. Syötä kiinteistötunnus, esimerkiksi `123-45-6-789`
 2. Jos kunnalle ei ole vielä tallennettua nimeä, syötä se kerran. Nimi
    muistetaan seuraavaa kertaa varten.
-3. Valitse tarvittaessa valmis GeoPackage tai GeoPackagen latauskansio
+3. Valitse halutessasi valmis GeoPackage tai GeoPackagen latauskansio
    **Lisäasetukset**-osiossa.
 4. Paina **Hae arvio**.
-5. Tarkastele kuvio- ja puulajikohtaisia tuloksia sekä lokia.
-6. Valitse tulostekansio ja paina **Tallenna Excel + KML**.
-
-Graafisessa käyttöliittymässä voit:
-
-- hakea arvion kiinteistötunnuksella
-- syöttää ja tallentaa MML API-avaimen
-- käyttää valmista GeoPackagea tai antaa latauskansion
-- tarkastella kuviokohtaisia ja puulajikohtaisia tuloksia
-- tallentaa Excel-yhteenvedon ja Google Maps -tason (KML) valittuun kansioon
-- avata Google My Maps -sivun ja tulostekansion suoraan sovelluksesta
+5. Valitse tulostekansio ja paina **Tallenna Excel + KML** jos haluat tallentaa tiedot.
+6. Jos haluat avata selaimen heti, sen voi tehdä suoraan sovelluksesta **Avaa Google My Maps** napista
 
 Kartan luominen
 ---------------
