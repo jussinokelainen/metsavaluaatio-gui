@@ -53,7 +53,7 @@ cp ./metsavaluaatio-gui.rb ./homebrew-metsavaluaatio/Casks/metsavaluaatio-gui.rb
 printf '{"version": "%s"}\n' "$VERSION" >./homebrew-metsavaluaatio/gui_version.json
 echo "Formula files updated."
 
-message="Updated gui cask to version $VERSION"
+message="Updated GUI cask to version $VERSION"
 printf "Commit new metsavaluaatio-gui.rb in homebrew-metsavaluaatio with message '\e[32m%s\e[0m'?" "$message"
 read -p " [y/n] " -r
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -63,4 +63,5 @@ fi
 cd ./homebrew-metsavaluaatio/ || exit
 git add ./Casks/metsavaluaatio-gui.rb ./gui_version.json
 git commit -m "$message"
+git pull --rebase
 git push
