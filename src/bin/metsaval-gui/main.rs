@@ -1134,7 +1134,7 @@ const STAND_COLUMNS: [Column; 11] = [
     },
 ];
 
-const SPECIES_COLUMNS: [Column; 11] = [
+const SPECIES_COLUMNS: [Column; 13] = [
     Column {
         title: "Kuvio",
         width: 70.0,
@@ -1160,8 +1160,16 @@ const SPECIES_COLUMNS: [Column; 11] = [
         width: 105.0,
         monospace: true,
     },
-    // Keskiläpimitta?
-    // Keskipituus?
+    Column {
+        title: "Keskiläpimitta, cm",
+        width: 105.0,
+        monospace: true,
+    },
+    Column {
+        title: "Keskipituus, cm",
+        width: 100.0,
+        monospace: true,
+    },
     Column {
         title: "Tilavuus m³/ha",
         width: 110.0,
@@ -1380,6 +1388,14 @@ fn species_row(index: usize, value: &SpeciesSummary) -> AnyElement {
             )),
             "Ikä, v" => cell.child(monospace(age.clone(), text())),
             "Runkoluku, kpl/ha" => cell.child(monospace(util::fmt_fi(value.stemcount, 0), text())),
+            "Keskiläpimitta, cm" => cell.child(monospace(
+                util::fmt_fi(value.meandiameter.unwrap_or(0.0), 1),
+                text(),
+            )),
+            "Keskipituus, cm" => cell.child(monospace(
+                util::fmt_fi(value.meanheight.unwrap_or(0.0), 1),
+                text(),
+            )),
             "Tilavuus m³/ha" => cell.child(monospace(util::fmt_fi(value.volume, 1), text())),
             "Tukkia m³/ha" => cell.child(monospace(util::fmt_fi(value.sawlogvolume, 1), text())),
             "Kuitua m³/ha" => cell.child(monospace(util::fmt_fi(value.pulpwoodvolume, 1), text())),
