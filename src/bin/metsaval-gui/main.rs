@@ -47,6 +47,7 @@ fn main() {
 
     app.run(|cx: &mut gpui_kit::App| {
         gpui_kit::init(cx);
+        gpui_kit::component::Theme::global_mut(cx).colors.caret = text();
         open_main_window(cx);
     });
 }
@@ -193,7 +194,7 @@ impl MetsavalApp {
 
     /// Tämänhetkinen kunta-koodi joko täydennetystä tai raa'asta tunnuksesta.
     fn current_code(&self, cx: &App) -> Option<String> {
-        util::property_code(&self.property_id.read(cx).value().to_string())
+        util::property_code(self.property_id.read(cx).value().as_ref())
     }
 
     /// Käynnistää haun taustasäikeessä.
@@ -452,7 +453,7 @@ impl MetsavalApp {
         form = form
             .child(section_title("Haku"))
             .child(field_label("Kiinteistötunnus"))
-            .child(Input::new(&self.property_id));
+            .child(Input::new(&self.property_id).bg(input_bg()));
 
         form = form.child(match (self.use_gpkg, known) {
             (true, _) => muted_text("Käytetään valmista GeoPackagea, kuntaa ei tarvita."),
@@ -474,7 +475,7 @@ impl MetsavalApp {
                     .flex_col()
                     .gap_1()
                     .child(field_label(format!("Kunta (koodi {code})")))
-                    .child(Input::new(&self.municipality_input))
+                    .child(Input::new(&self.municipality_input).bg(input_bg()))
                     .child(muted_text(
                         "Nimi tallennetaan, jotta sitä ei kysytä uudelleen.",
                     ))
@@ -522,7 +523,8 @@ impl MetsavalApp {
                 .child(
                     Input::new(&self.api_key)
                         .content_type(InputContentType::Password)
-                        .mask_toggle(),
+                        .mask_toggle()
+                        .bg(input_bg()),
                 )
                 .child(secondary_button(
                     "save-api-key",
@@ -557,14 +559,14 @@ impl MetsavalApp {
 
             if self.use_gpkg {
                 advanced = advanced
-                    .child(Input::new(&self.gpkg_path))
+                    .child(Input::new(&self.gpkg_path).bg(input_bg()))
                     .child(muted_text(
                         "Vältä lataus, kun haet useita kiinteistöjä samasta kunnasta.",
                     ));
             } else {
                 advanced = advanced
                     .child(field_label("GeoPackagen latauskansio (valinnainen)"))
-                    .child(Input::new(&self.gpkg_download_dir));
+                    .child(Input::new(&self.gpkg_download_dir).bg(input_bg()));
             }
 
             form = form.child(advanced);
@@ -598,7 +600,7 @@ impl MetsavalApp {
         form = form
             .child(div().h(px(1.)).w_full().bg(border()))
             .child(field_label("Tulostekansio"))
-            .child(Input::new(&self.output_dir))
+            .child(Input::new(&self.output_dir).bg(input_bg()))
             .child(muted_text(
                 "Excel- ja KML-tiedostot kirjoitetaan tähän kansioon.",
             ))

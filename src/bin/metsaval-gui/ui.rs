@@ -2,7 +2,6 @@
 
 use gpui_kit::{
     App, ClickEvent, FontWeight, Hsla, IntoElement, SharedString, Window, div, prelude::*, px, rgb,
-    rgba,
 };
 
 // Värit ovat hex-arvoja, jotta ne on helppo pitää yhdessä paikassa.
@@ -55,10 +54,6 @@ pub fn amber() -> Hsla {
 
 pub fn accent() -> Hsla {
     rgb(ACCENT_HEX).into()
-}
-
-pub fn selection() -> Hsla {
-    rgba(0x4f7cff55).into()
 }
 
 /// Ensisijainen, koko leveyden painike.
