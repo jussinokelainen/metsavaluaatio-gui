@@ -36,6 +36,8 @@ use ui::{
     secondary_button, small_button, stat_card, tab_button, text,
 };
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 fn main() {
     let app = gpui_kit::application().with_assets(Assets);
 
@@ -394,13 +396,19 @@ impl MetsavalApp {
             .border_b_1()
             .border_color(border())
             .child(
-                div().flex().items_center().gap_3().child(
-                    div()
-                        .text_size(px(20.))
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(text())
-                        .child("Metsävaluaatio"),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(text())
+                            .child("Metsävaluaatio"),
+                    )
+                    .text_color(muted())
+                    .child(VERSION),
             )
             .child(
                 div()
