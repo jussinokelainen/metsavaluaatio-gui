@@ -18,15 +18,6 @@
     "line": 1
   },
   {
-    "title": "tekstikentät",
-    "content": "tekstikentät ei toimi hyvin jos tekstin pituus on kentän pituutta isompi",
-    "time": 1794759014,
-    "priority": 15,
-    "tag": "NONE",
-    "file": "NO_FILE",
-    "line": 1
-  },
-  {
     "title": "testit",
     "content": "korjaa gui testit, ne ei toimi gpui:sta gpui_kit vaihdon jälkeen",
     "time": 1795103276,

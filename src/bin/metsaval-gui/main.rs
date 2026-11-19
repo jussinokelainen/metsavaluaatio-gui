@@ -11,6 +11,7 @@ mod ui;
 mod util;
 
 use form::{RunForm, prepare_run};
+use gpui_kit::assets::Assets;
 use gpui_kit::base::Root;
 use gpui_kit::component::input::{Input, InputContentType, InputState};
 use gpui_kit::{
@@ -35,7 +36,7 @@ use ui::{
 };
 
 fn main() {
-    let app = gpui_kit::application();
+    let app = gpui_kit::application().with_assets(Assets);
 
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
@@ -48,6 +49,7 @@ fn main() {
     app.run(|cx: &mut gpui_kit::App| {
         gpui_kit::init(cx);
         gpui_kit::component::Theme::global_mut(cx).colors.caret = text();
+        gpui_kit::component::Theme::global_mut(cx).colors.foreground = muted();
         open_main_window(cx);
     });
 }
