@@ -7,23 +7,5 @@
     "tag": "NONE",
     "file": "NO_FILE",
     "line": 1
-  },
-  {
-    "title": "selaus",
-    "content": "hiiren rullalla selaus on aika outo atm jos ikkuna on pieni ja koittaa kattoo ladattua puuston dataa. Vois ainaki lisää palkit alas ja oikeeseen reunaan jos kaikki data ei mahu kyseisessä suunnassa, ja koittaa saada hiiren rullan toimimaan vaan yhteen suuntaan kerrallaan",
-    "time": 1794695004,
-    "priority": 19,
-    "tag": "NONE",
-    "file": "NO_FILE",
-    "line": 1
-  },
-  {
-    "title": "testit",
-    "content": "korjaa gui testit, ne ei toimi gpui:sta gpui_kit vaihdon jälkeen",
-    "time": 1795103276,
-    "priority": 14,
-    "tag": "NONE",
-    "file": "NO_FILE",
-    "line": 1
   }
 ]

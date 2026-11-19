@@ -14,6 +14,7 @@ use form::{RunForm, prepare_run};
 use gpui_kit::assets::Assets;
 use gpui_kit::base::Root;
 use gpui_kit::component::input::{Input, InputContentType, InputState};
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::{
     AnyElement, App, AppContext, Bounds, Context, Div, Entity, FontWeight, Hsla, IntoElement,
     Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
@@ -141,7 +142,7 @@ impl MetsavalApp {
             api_key,
             show_advanced: api_key_text.trim().is_empty(),
             municipalities: settings::load_municipalities(),
-            property_id: cx.new(|cx| InputState::new(window, cx).placeholder("asdfasdfasdf")),
+            property_id: cx.new(|cx| InputState::new(window, cx).placeholder("esim. 123-45-6-789")),
             municipality_input: cx.new(|cx| InputState::new(window, cx).placeholder("Kunnan nimi")),
             use_gpkg: false,
             gpkg_path: cx.new(|cx| InputState::new(window, cx).placeholder("/polku/MV_Kunta.gpkg")),
@@ -1213,50 +1214,44 @@ fn table(
         .rounded_md()
         .overflow_hidden()
         .child(
-            div()
-                .id(id)
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h(px(0.))
-                .overflow_x_scroll()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_h(px(0.))
-                        .min_w(px(content_width))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .h(px(30.))
-                                .px_2()
-                                .bg(input_bg())
-                                .border_b_1()
-                                .border_color(border())
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(muted())
-                                .children(columns.iter().map(|column| {
-                                    column_cell(column)
-                                        .text_size(px(11.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(muted())
-                                        .child(column.title)
-                                })),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_h(px(0.))
-                                .child(gpui_kit::uniform_list(list_id, count, rows).flex_1()),
-                        ),
-                ),
+            div().id(id).flex().flex_col().flex_1().min_h(px(0.)).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .min_w(px(content_width))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .h(px(30.))
+                            .px_2()
+                            .bg(input_bg())
+                            .border_b_1()
+                            .border_color(border())
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(muted())
+                            .children(columns.iter().map(|column| {
+                                column_cell(column)
+                                    .text_size(px(11.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(muted())
+                                    .child(column.title)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h(px(0.))
+                            .child(gpui_kit::uniform_list(list_id, count, rows).flex_1()),
+                    ),
+            ),
         )
+        .overflow_scrollbar()
         .into_any_element()
 }
 
