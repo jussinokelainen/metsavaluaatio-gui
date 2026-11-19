@@ -1,6 +1,6 @@
 //! Yhteiset värit ja pienet uudelleenkäytettävät UI-palaset.
 
-use gpui::{
+use gpui_kit::{
     App, ClickEvent, FontWeight, Hsla, IntoElement, SharedString, Window, div, prelude::*, px, rgb,
     rgba,
 };

@@ -7,11 +7,17 @@
 mod form;
 mod pipeline;
 mod settings;
-mod text_input;
 mod ui;
 mod util;
 
 use form::{RunForm, prepare_run};
+use gpui_kit::base::Root;
+use gpui_kit::component::input::{Input, InputContentType, InputState};
+use gpui_kit::{
+    AnyElement, App, AppContext, Bounds, Context, Div, Entity, FontWeight, Hsla, IntoElement,
+    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, rgb, size,
+};
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -19,23 +25,17 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
-use gpui::{
-    AnyElement, App, Application, Bounds, Context, Div, Entity, FontWeight, Hsla, IntoElement,
-    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size,
-};
 use metsaval::consts::Cutting;
 use metsaval::model::{SpeciesSummary, StandValue};
 
 use pipeline::{Options, Valuation};
-use text_input::TextInput;
 use ui::{
     amber, bg, border, checkbox_row, green, input_bg, muted, panel, primary_button, red,
     secondary_button, small_button, stat_card, tab_button, text,
 };
 
 fn main() {
-    let app = Application::new();
+    let app = gpui_kit::application();
 
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
@@ -45,13 +45,13 @@ fn main() {
         }
     });
 
-    app.run(|cx: &mut App| {
-        cx.bind_keys(text_input::key_bindings());
+    app.run(|cx: &mut gpui_kit::App| {
+        gpui_kit::init(cx);
         open_main_window(cx);
     });
 }
 
-fn open_main_window(cx: &mut App) {
+fn open_main_window(cx: &mut gpui_kit::App) {
     let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
     cx.open_window(
         WindowOptions {
@@ -64,7 +64,10 @@ fn open_main_window(cx: &mut App) {
             app_id: Some("metsaval".to_string()),
             ..Default::default()
         },
-        |_, cx| cx.new(MetsavalApp::new),
+        |window, cx| {
+            let view = cx.new(|cx| MetsavalApp::new(window, cx));
+            cx.new(|cx| Root::new(view, window, cx))
+        },
     )
     .expect("ikkunan avaaminen epäonnistui");
 
@@ -86,18 +89,17 @@ enum ExportMessage {
 
 struct MetsavalApp {
     // Asetukset
-    api_key: Entity<TextInput>,
-    show_api_key: bool,
+    api_key: Entity<InputState>,
     show_advanced: bool,
     municipalities: HashMap<String, String>,
 
     // Hakukanavan kentät
-    property_id: Entity<TextInput>,
-    municipality_input: Entity<TextInput>,
+    property_id: Entity<InputState>,
+    municipality_input: Entity<InputState>,
     use_gpkg: bool,
-    gpkg_path: Entity<TextInput>,
-    gpkg_download_dir: Entity<TextInput>,
-    output_dir: Entity<TextInput>,
+    gpkg_path: Entity<InputState>,
+    gpkg_download_dir: Entity<InputState>,
+    output_dir: Entity<InputState>,
 
     // Tila
     running: bool,
@@ -117,30 +119,32 @@ struct MetsavalApp {
 }
 
 impl MetsavalApp {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_text = settings::load_api_key().unwrap_or_default();
         let output_dir_text = dirs::download_dir()
             .or_else(dirs::home_dir)
             .map(|path| path.display().to_string())
             .unwrap_or_default();
 
-        let api_key = cx.new(|cx| TextInput::new(cx, "MML API-avain", true));
-        api_key.update(cx, |input, cx| input.set_content(api_key_text.clone(), cx));
+        let api_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(&api_key_text)
+                .masked(true)
+        });
 
-        let output_dir = cx.new(|cx| TextInput::new(cx, "esim. ~/Downloads", false));
-        output_dir.update(cx, |input, cx| input.set_content(output_dir_text, cx));
+        let output_dir = cx.new(|cx| InputState::new(window, cx).default_value(&output_dir_text));
 
         let app = Self {
             api_key,
-            show_api_key: false,
             show_advanced: api_key_text.trim().is_empty(),
             municipalities: settings::load_municipalities(),
-            property_id: cx.new(|cx| TextInput::new(cx, "esim. 740-555-2-4", false)),
-            municipality_input: cx.new(|cx| TextInput::new(cx, "Kunnan nimi", false)),
+            property_id: cx.new(|cx| InputState::new(window, cx).placeholder("asdfasdfasdf")),
+            municipality_input: cx.new(|cx| InputState::new(window, cx).placeholder("Kunnan nimi")),
             use_gpkg: false,
-            gpkg_path: cx.new(|cx| TextInput::new(cx, "/polku/MV_Kunta.gpkg", false)),
-            gpkg_download_dir: cx
-                .new(|cx| TextInput::new(cx, "oletus: järjestelmän väliaikaiskansio", false)),
+            gpkg_path: cx.new(|cx| InputState::new(window, cx).placeholder("/polku/MV_Kunta.gpkg")),
+            gpkg_download_dir: cx.new(|cx| {
+                InputState::new(window, cx).placeholder("oletus: järjestelmän väliaikaiskansio")
+            }),
             output_dir,
             running: false,
             exporting: false,
@@ -159,16 +163,6 @@ impl MetsavalApp {
         // Tekstikentät ovat omia GPUI-entiteettejään, joten niiden
         // muutoksista pitää kertoa myös pää-näkymälle. Muuten esimerkiksi
         // API-avaimen tila ja kunnan nimi eivät päivity kirjoittaessa.
-        for input in [
-            app.api_key.clone(),
-            app.property_id.clone(),
-            app.municipality_input.clone(),
-            app.gpkg_path.clone(),
-            app.gpkg_download_dir.clone(),
-            app.output_dir.clone(),
-        ] {
-            cx.observe(&input, |_, _, cx| cx.notify()).detach();
-        }
 
         app.start_background_poller(cx);
         app
@@ -179,7 +173,9 @@ impl MetsavalApp {
     fn start_background_poller(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
-                gpui::Timer::after(Duration::from_millis(100)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
 
                 let alive = this.update(cx, |this, cx| {
                     if this.poll() {
@@ -197,7 +193,7 @@ impl MetsavalApp {
 
     /// Tämänhetkinen kunta-koodi joko täydennetystä tai raa'asta tunnuksesta.
     fn current_code(&self, cx: &App) -> Option<String> {
-        util::property_code(&input_text(cx, &self.property_id))
+        util::property_code(&self.property_id.read(cx).value().to_string())
     }
 
     /// Käynnistää haun taustasäikeessä.
@@ -210,12 +206,12 @@ impl MetsavalApp {
         self.notice = None;
 
         let form = RunForm {
-            api_key: input_text(cx, &self.api_key),
-            property_id: input_text(cx, &self.property_id),
-            municipality_input: input_text(cx, &self.municipality_input),
+            api_key: self.api_key.read(cx).value().to_string(),
+            property_id: self.property_id.read(cx).value().to_string(),
+            municipality_input: self.municipality_input.read(cx).value().to_string(),
             use_gpkg: self.use_gpkg,
-            gpkg_path: input_text(cx, &self.gpkg_path),
-            gpkg_download_dir: input_text(cx, &self.gpkg_download_dir),
+            gpkg_path: self.gpkg_path.read(cx).value().to_string(),
+            gpkg_download_dir: self.gpkg_download_dir.read(cx).value().to_string(),
         };
 
         let prepared = match prepare_run(&form, &mut self.municipalities) {
@@ -229,7 +225,6 @@ impl MetsavalApp {
 
         if prepared.municipality_added {
             settings::save_municipalities(&self.municipalities);
-            set_input(cx, &self.municipality_input, "");
         }
 
         // Tallennetaan avain, jotta sitä ei tarvitse syöttää uudelleen.
@@ -275,7 +270,7 @@ impl MetsavalApp {
             return;
         };
 
-        let dir_text = input_text(cx, &self.output_dir);
+        let dir_text = self.output_dir.read(cx).value().to_string();
         if dir_text.is_empty() {
             self.error = Some("Anna tulostekansio.".to_string());
             cx.notify();
@@ -383,7 +378,7 @@ impl MetsavalApp {
     }
 
     fn header(&self, cx: &App) -> AnyElement {
-        let has_key = !input_text(cx, &self.api_key).is_empty();
+        let has_key = !&self.api_key.read(cx).value().to_string().is_empty();
 
         div()
             .flex()
@@ -457,7 +452,7 @@ impl MetsavalApp {
         form = form
             .child(section_title("Haku"))
             .child(field_label("Kiinteistötunnus"))
-            .child(self.property_id.clone());
+            .child(Input::new(&self.property_id));
 
         form = form.child(match (self.use_gpkg, known) {
             (true, _) => muted_text("Käytetään valmista GeoPackagea, kuntaa ei tarvita."),
@@ -479,7 +474,7 @@ impl MetsavalApp {
                     .flex_col()
                     .gap_1()
                     .child(field_label(format!("Kunta (koodi {code})")))
-                    .child(self.municipality_input.clone())
+                    .child(Input::new(&self.municipality_input))
                     .child(muted_text(
                         "Nimi tallennetaan, jotta sitä ei kysytä uudelleen.",
                     ))
@@ -514,7 +509,6 @@ impl MetsavalApp {
         );
 
         if self.show_advanced {
-            let show_key = self.show_api_key;
             let mut advanced = div()
                 .flex()
                 .flex_col()
@@ -525,25 +519,17 @@ impl MetsavalApp {
                 .border_color(border())
                 .rounded_md()
                 .child(field_label("MML API-avain"))
-                .child(self.api_key.clone())
-                .child(checkbox_row(
-                    "show-api-key",
-                    "Näytä avain",
-                    show_key,
-                    cx.listener(|this, _, _, cx| {
-                        this.show_api_key = !this.show_api_key;
-                        let masked = !this.show_api_key;
-                        this.api_key
-                            .update(cx, |input, cx| input.set_masked(masked, cx));
-                        cx.notify();
-                    }),
-                ))
+                .child(
+                    Input::new(&self.api_key)
+                        .content_type(InputContentType::Password)
+                        .mask_toggle(),
+                )
                 .child(secondary_button(
                     "save-api-key",
                     "Tallenna avain",
                     true,
                     cx.listener(|this, _, _, cx| {
-                        let key = input_text(cx, &this.api_key);
+                        let key = this.api_key.read(cx).value().to_string();
                         match settings::save_api_key(&key) {
                             Ok(path) => {
                                 this.notice =
@@ -570,13 +556,15 @@ impl MetsavalApp {
                 ));
 
             if self.use_gpkg {
-                advanced = advanced.child(self.gpkg_path.clone()).child(muted_text(
-                    "Vältä lataus, kun haet useita kiinteistöjä samasta kunnasta.",
-                ));
+                advanced = advanced
+                    .child(Input::new(&self.gpkg_path))
+                    .child(muted_text(
+                        "Vältä lataus, kun haet useita kiinteistöjä samasta kunnasta.",
+                    ));
             } else {
                 advanced = advanced
                     .child(field_label("GeoPackagen latauskansio (valinnainen)"))
-                    .child(self.gpkg_download_dir.clone());
+                    .child(Input::new(&self.gpkg_download_dir));
             }
 
             form = form.child(advanced);
@@ -610,7 +598,7 @@ impl MetsavalApp {
         form = form
             .child(div().h(px(1.)).w_full().bg(border()))
             .child(field_label("Tulostekansio"))
-            .child(self.output_dir.clone())
+            .child(Input::new(&self.output_dir))
             .child(muted_text(
                 "Excel- ja KML-tiedostot kirjoitetaan tähän kansioon.",
             ))
@@ -660,7 +648,7 @@ impl MetsavalApp {
                     "open-output",
                     "Avaa tulostekansio",
                     cx.listener(|this, _, _, cx| {
-                        let dir = input_text(cx, &this.output_dir);
+                        let dir = this.output_dir.read(cx).value().to_string();
                         if !dir.is_empty() {
                             metsaval::maps::open_browser(
                                 &util::expand_path(&dir).display().to_string(),
@@ -1022,18 +1010,6 @@ fn run_worker(options: Options, log_tx: Sender<String>) -> Result<Box<Valuation>
         .map_err(|error| format!("{error:#}"))
 }
 
-fn input_text(cx: &App, input: &Entity<TextInput>) -> String {
-    input.read(cx).content().trim().to_string()
-}
-
-fn set_input(
-    cx: &mut Context<MetsavalApp>,
-    input: &Entity<TextInput>,
-    value: impl Into<SharedString>,
-) {
-    input.update(cx, |input, cx| input.set_content(value, cx));
-}
-
 fn section_title(title: impl Into<SharedString>) -> AnyElement {
     div()
         .text_size(px(15.))
@@ -1273,7 +1249,7 @@ fn table(
                                 .flex_col()
                                 .flex_1()
                                 .min_h(px(0.))
-                                .child(gpui::uniform_list(list_id, count, rows).flex_1()),
+                                .child(gpui_kit::uniform_list(list_id, count, rows).flex_1()),
                         ),
                 ),
         )

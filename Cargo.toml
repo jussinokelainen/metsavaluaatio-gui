@@ -9,10 +9,10 @@ default-run = "metsaval-gui"
 # Graafinen käyttöliittymä on oletuksena käytössä.
 # Pelkän CLI:n voi rakentaa: cargo build --no-default-features
 default = ["gui"]
-gui = ["dep:gpui"]
+gui = []
 # GPUI:n testituen voi ottaa käyttöön testeissä:
 # cargo test --features gui-test-support --bin metsaval-gui
-gui-test-support = ["gui", "gpui/test-support"]
+gui-test-support = ["gui"]
 
 [dependencies]
 color-eyre = "0.6.5"
@@ -27,14 +27,11 @@ rusqlite = "0.37"
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 rust_xlsxwriter = "0.99"
 toml = "1.1.8"
-quick-xml = "0.42.0"
 chrono = "0.4.45"
 rand = "0.10.3"
 dirs = "7.0.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-
-# Graafinen käyttöliittymä (metsaval-gui)
-gpui = { version = "0.2.2", optional = true }
+gpui-kit = "0.10.0"
 
 [[bin]]
 name = "metsaval"
@@ -44,3 +41,6 @@ path = "src/main.rs"
 name = "metsaval-gui"
 path = "src/bin/metsaval-gui/main.rs"
 required-features = ["gui"]
+
+[profile.dev]
+debug = "line-tables-only"
