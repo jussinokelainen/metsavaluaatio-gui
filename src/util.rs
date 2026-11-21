@@ -1,6 +1,57 @@
 use chrono::{Local, SubsecRound};
 use color_eyre::{Result, eyre::eyre};
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
+use std::time::SystemTime;
+
+/// 2 viikkoa sekunteissa
+/// 60 * 60 * 24 * 7 * 2 = 1 209 600
+const MAX_GPKG_AGE: u64 = 1209600;
+
+pub fn log(tx: &Sender<String>, message: impl Into<String>) {
+    let _ = tx.send(message.into());
+}
+
+/// Poistaa cachen geopackage hakemistosta tarpeeksi vanhat
+/// geopackaget, jotta seuraavan kerran voidaan ladata uusi versio
+///
+/// Paluttaa Err tyypin jos tiedostojen saamisessa, metadatan lukemisessa
+/// tai tiedoston poistamisessa tapahtui virhe
+pub fn clean_outdated_cache() -> Result<()> {
+    let dir = get_gpkg_dir(None);
+    for entry in std::fs::read_dir(dir.clone())? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        let modified = metadata.modified()?;
+
+        let age = SystemTime::now().duration_since(modified)?.as_secs();
+        if age > MAX_GPKG_AGE {
+            std::fs::remove_file(entry.path())?
+        }
+    }
+    Ok(())
+}
+
+/// Hakee ohjelman geopackage cache hakemiston
+/// (~/.cache/metsavaluaatio/geopackage)
+/// Jos sen hakeminen epäonnistuu, palauttaa /tmp hakemistoon
+/// luodun /tmp/metsavaluaatio_PID/ hakemiston
+///
+/// Jos log_tx ei ole None, kirjoittaa lokiin jos cache hakemiston saaminen
+/// epäonnistui
+pub fn get_gpkg_dir(log_tx: Option<&Sender<String>>) -> PathBuf {
+    if let Some(cache) = dirs::cache_dir() {
+        cache.join("metsavaluaatio").join("geopackage")
+    } else {
+        if let Some(log_tx) = log_tx {
+            log(
+                log_tx,
+                "Cache hakemiston saaminen epäonnistui, käytetään /tmp hakemistoa".to_string(),
+            );
+        }
+        std::env::temp_dir().join(format!("metsavaluaatio_{}", std::process::id()))
+    }
+}
 
 /// Laajentaa `~`-alkuisen polun kotihakemistoksi.
 pub fn expand_path(path: &str) -> PathBuf {

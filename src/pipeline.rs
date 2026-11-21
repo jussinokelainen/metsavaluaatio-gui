@@ -15,7 +15,7 @@ use metsaval_core::model::{RawRow, SpeciesSummary, Stand, StandValue, TimberValu
 use metsaval_core::{excel, geo_utils, maps, metsakeskus, mml, valuation, wfs};
 use proj::Proj;
 
-use crate::util;
+use crate::{util, util::log};
 
 /// Käyttäjän valinnat yhdelle arvioinnille.
 #[derive(Debug, Clone)]
@@ -56,10 +56,6 @@ impl Valuation {
     }
 }
 
-fn log(tx: &Sender<String>, message: impl Into<String>) {
-    let _ = tx.send(message.into());
-}
-
 /// Hakee kiinteistön tiedot, metsävarakuviot ja puustotiedot sekä laskee
 /// arvion. Eteneminen lähetetään `log`-kanavaan.
 pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> {
@@ -82,8 +78,8 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
         log(&log_tx, format!("Kunta: {name}"));
     }
 
-    // GeoPackage-lataus alkaa heti, kun kunta tiedetään, ja etenee taustalla
-    // muun haun ajan.
+    // GeoPackage-lataus alkaa heti kun kunta tiedetään, ja etenee taustalla
+    // muun haun ajan jos ei ole valmista GeoPackagea olemassa
     let gpkg_task = if let Some(path) = &options.gpkg_path {
         log(
             &log_tx,
@@ -94,22 +90,59 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
         let name = municipality
             .clone()
             .ok_or_else(|| eyre!("Kunnan nimi puuttuu"))?;
-        let download_dir = options.gpkg_download_dir.unwrap_or_else(|| {
-            std::env::temp_dir().join(format!("metsavaluaatio_{}", std::process::id()))
-        });
-        log(&log_tx, format!("Haetaan GeoPackage kunnalle {name}..."));
+        let gpkg_dir = options
+            .gpkg_download_dir
+            .unwrap_or_else(|| util::get_gpkg_dir(Some(&log_tx)));
 
-        let task_log = log_tx.clone();
-        Some(tokio::spawn(async move {
-            let start = std::time::Instant::now();
-            let path = metsakeskus::download_gpkg(&name, download_dir).await?;
-            let seconds = start.elapsed().as_secs_f64();
-            let _ = task_log.send(format!(
-                "GeoPackage valmis ({seconds:.1} s): {}",
-                path.display()
-            ));
-            Ok::<PathBuf, color_eyre::Report>(path)
-        }))
+        // Halutun kunnan GeoPackage tiedoston nimi
+        let target_file_name = format!("MV_{}.gpkg", name);
+
+        // Etsii tallennetuista GeoPackageista oikean kunnan tiedoston
+        let mut found_gpkgs = Vec::new();
+        for entry in std::fs::read_dir(gpkg_dir.clone())? {
+            let entry = entry?;
+            if let Some(filename) = entry.path().file_name()
+                && let Some(path) = filename.to_str()
+                && path == target_file_name
+            {
+                let found_path = entry.path();
+                log(
+                    &log_tx,
+                    format!(
+                        "Valmis GeoPackage löytyi kohteesta {}",
+                        found_path.display()
+                    ),
+                );
+                found_gpkgs.push(found_path.to_owned());
+                break;
+            }
+        }
+
+        if let Some(gpkg_path) = found_gpkgs.into_iter().next() {
+            // Valmis GeoPackage löytyi, palauttaa sen oikeassa muodossa
+            Some(tokio::spawn(async move {
+                Ok::<PathBuf, color_eyre::Report>(gpkg_path)
+            }))
+        } else {
+            // Valmista GeoPackagea ei löytynyt kyseiselle kunnalle, ladataan se
+            log(
+                &log_tx,
+                format!("GeoPackage ladataan kohteeseen {}...", gpkg_dir.display()),
+            );
+            log(&log_tx, format!("Haetaan GeoPackage kunnalle {name}..."));
+
+            let task_log = log_tx.clone();
+            Some(tokio::spawn(async move {
+                let start = std::time::Instant::now();
+                let path = metsakeskus::download_gpkg(&name, gpkg_dir).await?;
+                let seconds = start.elapsed().as_secs_f64();
+                let _ = task_log.send(format!(
+                    "GeoPackage valmis ({seconds:.1} s): {}",
+                    path.display()
+                ));
+                Ok::<PathBuf, color_eyre::Report>(path)
+            }))
+        }
     };
 
     log(&log_tx, "Haetaan kiinteistön palstat MML:stä...");

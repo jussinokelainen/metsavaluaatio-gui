@@ -78,6 +78,12 @@ fn open_main_window(cx: &mut gpui_kit::App) {
     .expect("ikkunan avaaminen epäonnistui");
 
     cx.activate(true);
+
+    // Poistaa liian vanhat GeoPackaget
+    // TODO: Virheiden tarkistus ja niistä ilmottaminen jos tarvii
+    // ei pitäis tällä hetkellä olla iso ongelma jos palauttaa virheen,
+    // saattaa vaan käyttää yli 2 viikkoa vanhoja geopackageja vähän aikaa
+    let _ = util::clean_outdated_cache();
 }
 
 /// Yläpalkin tilat.
@@ -571,15 +577,8 @@ impl MetsavalApp {
             if self.use_gpkg {
                 advanced = advanced
                     .child(Input::new(&self.gpkg_path).bg(input_bg()))
-                    .child(muted_text(
-                        "Vältä lataus, kun haet useita kiinteistöjä samasta kunnasta.",
-                    ));
-            } else {
-                advanced = advanced
-                    .child(field_label("GeoPackagen latauskansio (valinnainen)"))
-                    .child(Input::new(&self.gpkg_download_dir).bg(input_bg()));
+                    .child(muted_text("Käytä omaa GeoPackagea (ei suositeltavaa)."));
             }
-
             form = form.child(advanced);
         }
 
