@@ -5,9 +5,9 @@
 //! että yksikkötestien lisäksi kokonaiskulku pysyy ennallaan.
 
 use geo::{LineString, MultiPolygon, Polygon};
-use metsaval::consts::Cutting;
-use metsaval::model::{Stand, StandSummary, TreeStratum};
-use metsaval::{excel, geo_utils, maps, valuation};
+use metsaval_core::consts::Cutting;
+use metsaval_core::model::{Stand, StandSummary, TreeStratum};
+use metsaval_core::{excel, geo_utils, maps, valuation};
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -234,7 +234,7 @@ fn full_pipeline_from_property_to_exports() {
     assert_close(first.net_eur, first.income_eur - first.costs_eur);
     assert!(matches!(
         first.fertility_class,
-        metsaval::consts::FertilityClass::Lehto
+        metsaval_core::consts::FertilityClass::Lehto
     ));
 
     let second = &stand_values[1];

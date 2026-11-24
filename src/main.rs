@@ -27,8 +27,8 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
-use metsaval::consts::Cutting;
-use metsaval::model::{SpeciesSummary, StandValue};
+use metsaval_core::consts::Cutting;
+use metsaval_core::model::{SpeciesSummary, StandValue};
 
 use pipeline::{Options, Valuation};
 use ui::{
@@ -655,7 +655,7 @@ impl MetsavalApp {
                 .items_center()
                 .gap_2()
                 .child(small_button("open-mymaps", "Google My Maps", |_, _, _| {
-                    metsaval::maps::open_browser("https://www.google.com/mymaps");
+                    metsaval_core::maps::open_browser("https://www.google.com/mymaps");
                 }))
                 .child(small_button(
                     "open-output",
@@ -663,7 +663,7 @@ impl MetsavalApp {
                     cx.listener(|this, _, _, cx| {
                         let dir = this.output_dir.read(cx).value().to_string();
                         if !dir.is_empty() {
-                            metsaval::maps::open_browser(
+                            metsaval_core::maps::open_browser(
                                 &util::expand_path(&dir).display().to_string(),
                             );
                         }
@@ -889,7 +889,7 @@ impl MetsavalApp {
                 "open-mymaps-result",
                 "Avaa Google My Maps",
                 |_, _, _| {
-                    metsaval::maps::open_browser("https://www.google.com/mymaps");
+                    metsaval_core::maps::open_browser("https://www.google.com/mymaps");
                 },
             ))
             .into_any_element()

@@ -135,7 +135,7 @@ pub fn fmt_pct(value: Option<f64>) -> String {
 #[allow(dead_code)]
 pub fn species_name(code: Option<i64>) -> &'static str {
     match code {
-        Some(code) => metsaval::consts::Species::from_code(code).name(),
+        Some(code) => metsaval_core::consts::Species::from_code(code).name(),
         None => "–",
     }
 }

@@ -10,9 +10,9 @@ use std::sync::mpsc::Sender;
 use color_eyre::{Result, eyre::eyre};
 use geo::{HasDimensions, MultiPolygon};
 use geojson::Feature;
-use metsaval::consts::{EPSG_TM35FIN, EPSG_WGS84};
-use metsaval::model::{RawRow, SpeciesSummary, Stand, StandValue, TimberValue, Totals};
-use metsaval::{excel, geo_utils, maps, metsakeskus, mml, valuation, wfs};
+use metsaval_core::consts::{EPSG_TM35FIN, EPSG_WGS84};
+use metsaval_core::model::{RawRow, SpeciesSummary, Stand, StandValue, TimberValue, Totals};
+use metsaval_core::{excel, geo_utils, maps, metsakeskus, mml, valuation, wfs};
 use proj::Proj;
 
 use crate::util;
@@ -126,7 +126,7 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
         ),
     );
 
-    let wfs_url = metsaval::consts::stand_wfs_url();
+    let wfs_url = metsaval_core::consts::stand_wfs_url();
 
     log(&log_tx, "Haetaan metsävarakerroksia...");
     let stand_layers = wfs::get_layers(&wfs_url).await?;

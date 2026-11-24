@@ -4102,9 +4102,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "metsaval"
-version = "1.0.0"
-source = "git+https://github.com/jussinokelainen/metsavaluaatio-core.git?tag=1.0.0#70ed6c7729c9af1fe9fc7b5ff529519128dd56c1"
+name = "metsaval-core"
+version = "1.0.1"
+source = "git+https://github.com/jussinokelainen/metsavaluaatio-core.git?tag=1.0.1#3a94a33a26da8c12b7d523aa9e101e9675bc4d9b"
 dependencies = [
  "color-eyre",
  "geo",
@@ -4131,7 +4131,7 @@ dependencies = [
  "geo",
  "geojson",
  "gpui-kit",
- "metsaval",
+ "metsaval-core",
  "minidom",
  "proj",
  "rand 0.10.3",
