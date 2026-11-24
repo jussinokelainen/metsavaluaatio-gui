@@ -1,1087 +1,1428 @@
-use chrono::{Local, SubsecRound};
-use color_eyre::{Result, eyre::eyre};
-use geo::{HasDimensions, MultiPolygon};
-use metsaval::consts::{CYAN, GREEN, RED, RESET, YELLOW};
-use metsaval::consts::{EPSG_TM35FIN, EPSG_WGS84};
-use metsaval::flagger;
-use metsaval::model::Stand;
-use proj::Proj;
-use serde::Deserialize;
-use std::{
-    collections::HashMap,
-    fs,
-    fs::read_to_string,
-    io::{BufRead, Write},
-    path::{Path, PathBuf},
+//! Metsävaluuation graafinen käyttöliittymä.
+//!
+//! Ohjelma käyttää samoja `metsaval`-kirjaston moduuleja kuin komentorivityökalu,
+//! mutta hoitaa kyselyt ja tulosteet GPUI-ikkunassa. Verkkohaku ja tiedostojen
+//! kirjoitus ajetaan taustasäikeissä, jotta käyttöliittymä pysyy responsiivisena.
+
+mod form;
+mod pipeline;
+mod settings;
+mod ui;
+mod util;
+
+use form::{RunForm, prepare_run};
+use gpui_kit::assets::Assets;
+use gpui_kit::base::Root;
+use gpui_kit::component::input::{Input, InputContentType, InputState};
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::{
+    AnyElement, App, AppContext, Bounds, Context, Div, Entity, FontWeight, Hsla, IntoElement,
+    Render, ScrollHandle, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, rgb, size,
 };
 
-#[derive(Deserialize)]
-struct Config {
-    api_key: String,
+use std::collections::HashMap;
+use std::ops::Range;
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
+
+use metsaval::consts::Cutting;
+use metsaval::model::{SpeciesSummary, StandValue};
+
+use pipeline::{Options, Valuation};
+use ui::{
+    amber, bg, border, checkbox_row, green, input_bg, muted, panel, primary_button, red,
+    secondary_button, small_button, stat_card, tab_button, text,
+};
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn main() {
+    let app = gpui_kit::application().with_assets(Assets);
+
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            open_main_window(cx);
+        } else {
+            cx.activate(true);
+        }
+    });
+
+    app.run(|cx: &mut gpui_kit::App| {
+        gpui_kit::init(cx);
+        gpui_kit::component::Theme::global_mut(cx).colors.caret = text();
+        gpui_kit::component::Theme::global_mut(cx).colors.foreground = muted();
+        open_main_window(cx);
+    });
 }
 
-/// `#[tokio::main]` luo monisäikeisen runtimea ja ajaa `main`:in sen
-/// sisällä. Tämän ansiosta `main` voi kutsua `await`-lausekkeita.
-#[tokio::main]
-async fn main() -> Result<()> {
-    color_eyre::install()?;
+fn open_main_window(cx: &mut gpui_kit::App) {
+    let bounds = Bounds::centered(None, size(px(1120.), px(780.)), cx);
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(px(840.), px(560.))),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Metsävaluaatio".into()),
+                ..Default::default()
+            }),
+            app_id: Some("metsaval".to_string()),
+            ..Default::default()
+        },
+        |window, cx| {
+            let view = cx.new(|cx| MetsavalApp::new(window, cx));
+            cx.new(|cx| Root::new(view, window, cx))
+        },
+    )
+    .expect("ikkunan avaaminen epäonnistui");
 
-    let args = flagger::parse_args(cli_flags(), None)?;
+    cx.activate(true);
+}
 
-    match parse_options(args) {
-        Command::Help => {
-            print_help();
-            Ok(())
-        }
-        Command::ListMunicipalities => {
-            list_municipalities();
-            Ok(())
-        }
-        Command::SetApi(key) => set_api(&key),
-        Command::RemoveMunicipality(key) => {
-            remove_municipality(&key);
-            Ok(())
-        }
-        Command::Usage => {
-            print_usage();
-            std::process::exit(2);
-        }
-        Command::Run(options) => run(options).await,
+/// Yläpalkin tilat.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Stands,
+    Species,
+    Log,
+}
+
+enum ExportMessage {
+    Done(Vec<PathBuf>),
+    Error(String),
+}
+
+struct MetsavalApp {
+    // Asetukset
+    api_key: Entity<InputState>,
+    show_advanced: bool,
+    municipalities: HashMap<String, String>,
+
+    // Hakukanavan kentät
+    property_id: Entity<InputState>,
+    municipality_input: Entity<InputState>,
+    use_gpkg: bool,
+    gpkg_path: Entity<InputState>,
+    gpkg_download_dir: Entity<InputState>,
+    output_dir: Entity<InputState>,
+
+    // Tila
+    running: bool,
+    exporting: bool,
+    result: Option<Box<Valuation>>,
+    error: Option<String>,
+    notice: Option<String>,
+    logs: Vec<String>,
+    log_scroll: ScrollHandle,
+    tab: Tab,
+    exported: Vec<PathBuf>,
+
+    // Taustatyön kanavat
+    log_rx: Option<Receiver<String>>,
+    done_rx: Option<Receiver<Result<Box<Valuation>, String>>>,
+    export_rx: Option<Receiver<ExportMessage>>,
+}
+
+impl MetsavalApp {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let api_key_text = settings::load_api_key().unwrap_or_default();
+        let output_dir_text = dirs::download_dir()
+            .or_else(dirs::home_dir)
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+
+        let api_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(&api_key_text)
+                .masked(true)
+        });
+
+        let output_dir = cx.new(|cx| InputState::new(window, cx).default_value(&output_dir_text));
+
+        let app = Self {
+            api_key,
+            show_advanced: api_key_text.trim().is_empty(),
+            municipalities: settings::load_municipalities(),
+            property_id: cx.new(|cx| InputState::new(window, cx).placeholder("esim. 123-45-6-789")),
+            municipality_input: cx.new(|cx| InputState::new(window, cx).placeholder("Kunnan nimi")),
+            use_gpkg: false,
+            gpkg_path: cx.new(|cx| InputState::new(window, cx).placeholder("/polku/MV_Kunta.gpkg")),
+            gpkg_download_dir: cx.new(|cx| {
+                InputState::new(window, cx).placeholder("oletus: järjestelmän väliaikaiskansio")
+            }),
+            output_dir,
+            running: false,
+            exporting: false,
+            result: None,
+            error: None,
+            notice: None,
+            logs: Vec::new(),
+            log_scroll: ScrollHandle::new(),
+            tab: Tab::Stands,
+            exported: Vec::new(),
+            log_rx: None,
+            done_rx: None,
+            export_rx: None,
+        };
+
+        // Tekstikentät ovat omia GPUI-entiteettejään, joten niiden
+        // muutoksista pitää kertoa myös pää-näkymälle. Muuten esimerkiksi
+        // API-avaimen tila ja kunnan nimi eivät päivity kirjoittaessa.
+
+        app.start_background_poller(cx);
+        app
     }
-}
 
-/// Jäsennetyistä argumenteista valittu toiminto.
-#[derive(Debug, PartialEq, Eq)]
-enum Command {
-    Help,
-    ListMunicipalities,
-    SetApi(String),
-    RemoveMunicipality(String),
-    /// Kiinteistötunnus puuttui tai argumentteja oli liikaa
-    Usage,
-    Run(RunOptions),
-}
+    /// Taustasäikeiden kanavia pollataan säännöllisesti GPUI:n
+    /// foreground-executorissa.
+    fn start_background_poller(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
 
-/// `run`-toiminnon valinnat argumenttirivistä.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct RunOptions {
-    property_id: String,
-    open_browser: bool,
-    gpkg_download_dir: PathBuf,
-    gpkg_path: PathBuf,
-}
+                let alive = this.update(cx, |this, cx| {
+                    if this.poll() {
+                        cx.notify();
+                    }
+                });
 
-/// Ohjelman liput ja niiden arvot.
-fn cli_flags() -> flagger::Flagset {
-    flagger::Flagset {
-        flags: vec!["h", "help", "kunta-lista", "selain"].into(),
-        value_flags: vec!["aseta-api", "poista-kunta", "gpkg-kohde", "gpkg-tiedosto"].into(),
-        opt_flags: None,
-    }
-}
-
-/// Muuntaa jäsennetyt argumentit suoritettavaksi toiminnoksi. Erittely
-/// erillään `main`-funktiosta, jotta lippujen käsittely on testattavissa
-/// ilman `process::exit`-kutsuja.
-fn parse_options(args: flagger::Arguments) -> Command {
-    let mut options = RunOptions::default();
-
-    if let Some(flags) = args.flags {
-        for flag in flags {
-            match flag.as_str() {
-                "h" | "help" => return Command::Help,
-                "kunta-lista" => return Command::ListMunicipalities,
-                "selain" => options.open_browser = true,
-                _ => {}
-            }
-        }
-    }
-
-    if let Some(value_flags) = args.value_flags {
-        for (flag, value) in value_flags {
-            match flag.as_str() {
-                "aseta-api" => return Command::SetApi(value),
-                "poista-kunta" => return Command::RemoveMunicipality(value),
-                "gpkg-kohde" => {
-                    options.gpkg_download_dir = PathBuf::from(&value);
-                    println!("{YELLOW}GeoPackage ladataan hakemistoon {CYAN}{value}{RESET}");
+                if alive.is_err() {
+                    break;
                 }
-                "gpkg-tiedosto" => {
-                    options.gpkg_path = PathBuf::from(&value);
-                    println!("{YELLOW}GeoPackage haetaan tiedostosta {CYAN}{value}{RESET}");
-                }
-                _ => {}
             }
-        }
-    }
-
-    let Some([raw_property_id]) = args.normal_str.as_deref() else {
-        return Command::Usage;
-    };
-
-    options.property_id = raw_property_id.to_string();
-    Command::Run(options)
-}
-
-/// Kiinteistön tietojen haku, laskenta ja tiedostojen luonti.
-///
-/// Verkkohaku on asynkronista (`reqwest` + `await`) ja tiedostojen kirjoitus
-/// ajetaan rinnakkain funktion lopussa. GeoPackage-purku, SQLite-luku ja
-/// käyttäjän syöte ovat yhä synkronisia ja blokkaavat runtimen säikeen.
-async fn run(options: RunOptions) -> Result<()> {
-    let output_file_dir = dirs::download_dir();
-
-    let property_id = &pad_property_id(&options.property_id)?;
-    let config = load_config()?;
-    let municipality_name = &parse_municipality(property_id)?;
-
-    println!("Kiinteistötunnus: {CYAN}{property_id}{RESET}");
-    println!("Kunta: {CYAN}{municipality_name}{RESET}");
-
-    // GeoPackage ei tarvitse kiinteistön tai kuvioiden tietoja, joten sen
-    // lataus alkaa heti kun kunta tiedetään ja etenee taustalla muun haun
-    // ajan. Tuloksen odotus tapahtuu vasta puustotietoja haettaessa.
-    let gpkg_task = if options.gpkg_path.is_empty() {
-        let mut gpkg_download_dir = options.gpkg_download_dir;
-        if gpkg_download_dir.is_empty() {
-            gpkg_download_dir =
-                std::env::temp_dir().join(format!("metsavaluaatio_{}", std::process::id()));
-        }
-
-        println!("Haetaan GeoPackage kunnalle {municipality_name}...");
-        let municipality = municipality_name.clone();
-        Some(tokio::spawn(async move {
-            let start_t = Local::now().timestamp_millis();
-            let path =
-                metsaval::metsakeskus::download_gpkg(&municipality, gpkg_download_dir).await?;
-            let total_t = (Local::now().timestamp_millis() - start_t) as f64 / 1000.0;
-            println!(
-                "{GREEN}GeoPackage valmis{RESET} ({total_t:.1} s): {}",
-                path.display()
-            );
-            Ok::<PathBuf, color_eyre::Report>(path)
-        }))
-    } else {
-        None
-    };
-
-    let (property_geometry, prop_feature_count) =
-        get_property_geometry(property_id, &config.api_key).await?;
-    println!("Kiinteistöltä löytyi {prop_feature_count} palstaa.");
-
-    println!(
-        "Geometriatyyppi: {}",
-        metsaval::geo_utils::geometry_type(&property_geometry)
-    );
-    println!(
-        "Pinta-ala: {CYAN}{:.3} ha{RESET}",
-        metsaval::geo_utils::area_m2(&property_geometry) / 10_000.0
-    );
-
-    // Haetaan WFS-osoite kerran; molemmat kutsut käyttävät samaa.
-    let wfs_url = metsaval::consts::stand_wfs_url();
-
-    // Metsävarakuviot Metsäkeskuksen WFS:stä
-    let stand_layers = metsaval::wfs::get_layers(&wfs_url).await?;
-    println!("Metsävarakerroksia löytyi: {}", stand_layers.len());
-
-    let stand_layer = metsaval::wfs::select_stand_layer(&stand_layers)?;
-    println!("Käytettävä metsävaralayer on {stand_layer}");
-
-    let bounds = metsaval::geo_utils::bounds(&property_geometry)
-        .ok_or_else(|| color_eyre::eyre::eyre!("Kiinteistön geometria on tyhjä."))?;
-    let bbox = format_bbox(bounds);
-
-    println!("Kiinteistön BBOX:");
-    println!("{bbox}");
-
-    let stand_features =
-        metsaval::wfs::get_features_bbox(&wfs_url, &stand_layer, &bbox, EPSG_TM35FIN, 10_000)
-            .await?;
-    println!("BBOX-alueelta löytyi: {} kuviota", stand_features.len());
-
-    let stands: Vec<Stand> = stand_features
-        .iter()
-        .filter_map(|feature| metsaval::geo_utils::clip_stand(feature, &property_geometry))
-        .collect();
-
-    println!(
-        "Kiinteistöllä sijaitsevia/leikkaavia metsäkuvioita: {}",
-        stands.len()
-    );
-
-    if stands.is_empty() {
-        color_eyre::eyre::bail!("Kiinteistöltä ei löytynyt yhtään metsäkuviota.");
-    }
-
-    let stand_ids = collect_stand_ids(&stands)?;
-
-    // Puustotiedot Metsäkeskuksen GeoPackagesta. Ladattu tiedosto odotetaan
-    // vasta tässä, kun sitä tarvitaan.
-    let gpkg_path = match gpkg_task {
-        Some(task) => task.await??,
-        None => options.gpkg_path,
-    };
-
-    let (strata, stand_summaries) =
-        metsaval::metsakeskus::read_trees_async(gpkg_path, stand_ids).await?;
-
-    // Arvon laskenta
-    let species_summary = metsaval::valuation::build_species_summary(&strata, &stands)?;
-    let timber_values = metsaval::valuation::build_timber_values(&species_summary);
-    let stand_values =
-        metsaval::valuation::build_stand_values(&species_summary, &stand_summaries, &stands);
-    let raw_rows = metsaval::valuation::build_raw_rows(&strata, &stands, &stand_summaries)?;
-    let fixed_costs = metsaval::valuation::build_fixed_costs(&stand_values);
-    let totals = metsaval::valuation::compute_totals(&stands, &stand_values);
-
-    // Tulostus
-    let summary_str =
-        metsaval::valuation::create_dataset_summary(&stand_values, &fixed_costs, &totals);
-    println!("{summary_str}");
-
-    // Kysy käyttäjältä luodaanko tiedostot
-    let stdin = std::io::stdin();
-    if !ask_confirmation_from(&mut stdin.lock(), &mut std::io::stdout()) {
-        return Ok(());
-    }
-
-    // Tiedostot luodaan rinnakkain. Kummankin tehtävän työ on synkronista
-    // (KML:n kokoaminen ja tiedoston kirjoitus, Excel-työkirjan rakentaminen),
-    // joten ne ajetaan omassa taustasäikeessään `spawn_blocking`-kautta eivätkä
-    // ne blokkaa asynkronista runtimea.
-    let kml_file = match &output_file_dir {
-        Some(dir) => dir.join(generate_filename(property_id, ".kml")),
-        None => PathBuf::from(generate_filename(property_id, ".kml")),
-    };
-    let excel_file = match &output_file_dir {
-        Some(dir) => dir.join(generate_filename(property_id, ".xlsx")),
-        None => PathBuf::from(generate_filename(property_id, ".xlsx")),
-    };
-
-    // `join!` odottaa molempia tehtäviä rinnakkain ja palauttaa molemmat
-    // tulokset vasta, kun molemmat ovat valmiita. `stand_values` on
-    // molempien tehtävien tarpeessa, joten siitä otetaan kopio.
-    let (kml_result, excel_result) = tokio::join!(
-        metsaval::maps::generate_and_write_kml(
-            stand_features,
-            property_geometry,
-            stand_values.clone(),
-            kml_file,
-        ),
-        metsaval::excel::export_async(
-            excel_file,
-            totals,
-            stand_values,
-            species_summary,
-            timber_values,
-            raw_rows,
-            fixed_costs,
-        ),
-    );
-
-    let kml_path = kml_result?;
-    // Yritä näyttää tiedoston täysi polku, näyttää vain tiedoston nimen
-    // jos se ei onnistu
-    match std::fs::canonicalize(&kml_path) {
-        Ok(path) => {
-            println!(
-                "Google maps taso tallennettu: {CYAN}{}{RESET}",
-                path.display()
-            );
-        }
-        Err(_) => println!(
-            "Google maps taso tallennettu: {CYAN}{}{RESET}",
-            kml_path.display()
-        ),
-    }
-
-    let excel_path = excel_result?;
-
-    // Yritä näyttää tiedoston täysi polku, näyttää vain tiedoston nimen
-    // jos se ei onnistu
-    match std::fs::canonicalize(&excel_path) {
-        Ok(path) => {
-            println!(
-                "Excel-yhteenveto tallennettu: {CYAN}{}{RESET}",
-                path.display()
-            );
-        }
-        Err(_) => println!(
-            "Excel-yhteenveto tallennettu: {CYAN}{}{RESET}",
-            excel_path.display()
-        ),
-    }
-
-    // Avaa selain kartan luonti sivulla
-    let maps_url = "https://www.google.com/mymaps";
-    if options.open_browser {
-        metsaval::maps::open_browser(maps_url);
-    } else {
-        metsaval::maps::print_maps_url(maps_url);
-    }
-
-    Ok(())
-}
-
-/// Muodostaa WFS-kyselyn rajauslaatikon.
-fn format_bbox(bounds: (f64, f64, f64, f64)) -> String {
-    let (min_x, min_y, max_x, max_y) = bounds;
-    format!("{min_x},{min_y},{max_x},{max_y},{EPSG_TM35FIN}")
-}
-
-/// Kerää kuvioista niistä puuttuvat `standid`-tunnukset kasvavassa
-/// järjestyksessä. Virhe jos yhtään tunnusta ei löydy.
-fn collect_stand_ids(stands: &[Stand]) -> Result<Vec<i64>> {
-    let mut stand_ids: Vec<i64> = stands.iter().filter_map(|stand| stand.standid).collect();
-    stand_ids.sort_unstable();
-    stand_ids.dedup();
-
-    if stand_ids.is_empty() {
-        color_eyre::eyre::bail!("Kuvioilta ei löytynyt standid-tunnuksia.");
-    }
-
-    Ok(stand_ids)
-}
-
-/// Lisää kiinteistötunnukseen puuttuvat nollat jotta pituus on oikea
-fn pad_property_id(id: &str) -> Result<String> {
-    let parts: Vec<&str> = id.split('-').collect();
-    if parts.len() != 4 {
-        return Err(eyre!("Virheellinen kiinteistötunnus"));
-    }
-
-    // Kaksi ensimmäistä osaa on 3 numeroa, kaksi viimeistä 4.
-    let padded: Vec<String> = parts
-        .iter()
-        .enumerate()
-        .map(|(index, part)| {
-            let width = if index < 2 { 3 } else { 4 };
-            if part.len() > width {
-                return Err(eyre!("Virheellinen kiinteistötunnus"));
-            }
-            Ok(format!("{part:0>width$}"))
         })
-        .collect::<Result<_>>()?;
-
-    Ok(padded.join("-"))
-}
-
-/// Kysyy käyttäjältä halutaanko tehdä xlsx ja kml tiedostot. Syöte luetaan
-/// annetusta lukijasta ja kehoite kirjoitetaan annettuun kirjoittajaan.
-fn ask_confirmation_from<R: BufRead, W: Write>(reader: &mut R, writer: &mut W) -> bool {
-    let mut s = String::new();
-    let _ = write!(
-        writer,
-        "Haluatko luoda {CYAN}xlsx{RESET} ja {CYAN}kml{RESET} tiedostot? [y/n]: "
-    );
-    let _ = writer.flush();
-    reader.read_line(&mut s).expect("Virheellinen syöte");
-
-    if let Some('\n') = s.chars().next_back() {
-        s.pop();
-    }
-    if let Some('\r') = s.chars().next_back() {
-        s.pop();
+        .detach();
     }
 
-    match s.as_str() {
-        "y" | "Y" => true,
-        "n" | "N" => false,
-        _ => ask_confirmation_from(reader, writer),
-    }
-}
-
-/// Palauttaa kiinteistön geometrian yhdistettynä yhteen MultiPolygoniin, ja kiinteistöllä sijaitsevien
-/// palstojen määrän
-async fn get_property_geometry(property_id: &str, api_key: &str) -> Result<(MultiPolygon, usize)> {
-    // Kiinteistön palstat MML:stä
-    let property_features = metsaval::mml::get_property_features(property_id, api_key).await?;
-    let property_geometry = combine_property_geometries(property_id, &property_features)?;
-
-    Ok((property_geometry, property_features.len()))
-}
-
-/// Yhdistää kiinteistön palstojen geometriat yhdeksi yhteiseksi
-/// MultiPolygoniksi ja muuttaa ne ETRS-TM35FIN-koordinaatistoon.
-fn combine_property_geometries(
-    property_id: &str,
-    property_features: &[geojson::Feature],
-) -> Result<MultiPolygon> {
-    if property_features.is_empty() {
-        color_eyre::eyre::bail!("Kiinteistölle {property_id} ei löytynyt palstoja MML:stä.");
+    /// Tämänhetkinen kunta-koodi joko täydennetystä tai raa'asta tunnuksesta.
+    fn current_code(&self, cx: &App) -> Option<String> {
+        util::property_code(self.property_id.read(cx).value().as_ref())
     }
 
-    let mut geometries_wgs84 = Vec::new();
-    for feature in property_features {
-        if let Some(geometry) = metsaval::geo_utils::feature_to_multipolygon(feature)
-            && !geometry.is_empty()
-        {
-            geometries_wgs84.push(geometry);
+    /// Käynnistää haun taustasäikeessä.
+    fn start_run(&mut self, cx: &mut Context<Self>) {
+        if self.running {
+            return;
         }
+
+        self.error = None;
+        self.notice = None;
+
+        let form = RunForm {
+            api_key: self.api_key.read(cx).value().to_string(),
+            property_id: self.property_id.read(cx).value().to_string(),
+            municipality_input: self.municipality_input.read(cx).value().to_string(),
+            use_gpkg: self.use_gpkg,
+            gpkg_path: self.gpkg_path.read(cx).value().to_string(),
+            gpkg_download_dir: self.gpkg_download_dir.read(cx).value().to_string(),
+        };
+
+        let prepared = match prepare_run(&form, &mut self.municipalities) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+
+        if prepared.municipality_added {
+            settings::save_municipalities(&self.municipalities);
+        }
+
+        // Tallennetaan avain, jotta sitä ei tarvitse syöttää uudelleen.
+        if let Err(error) = settings::save_api_key(&prepared.api_key) {
+            self.notice = Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
+        }
+
+        let options = Options {
+            property_id: prepared.property_id,
+            api_key: prepared.api_key,
+            municipality: prepared.municipality,
+            gpkg_path: prepared.gpkg_path,
+            gpkg_download_dir: prepared.gpkg_download_dir,
+        };
+
+        self.logs.clear();
+        self.logs.push("Aloitetaan haku...".to_string());
+        self.log_scroll.scroll_to_bottom();
+        self.result = None;
+        self.exported.clear();
+        self.running = true;
+        self.tab = Tab::Stands;
+
+        let (log_tx, log_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        self.log_rx = Some(log_rx);
+        self.done_rx = Some(done_rx);
+
+        std::thread::spawn(move || {
+            let result = run_worker(options, log_tx);
+            let _ = done_tx.send(result);
+        });
+
+        cx.notify();
     }
 
-    if geometries_wgs84.is_empty() {
-        color_eyre::eyre::bail!("MML palautti palstat, mutta niillä ei ollut geometriaa.");
+    /// Kirjoittaa Excel- ja KML-tiedostot valittuun kansioon.
+    fn start_export(&mut self, cx: &mut Context<Self>) {
+        if self.exporting {
+            return;
+        }
+        let Some(valuation) = self.result.as_ref() else {
+            return;
+        };
+
+        let dir_text = self.output_dir.read(cx).value().to_string();
+        if dir_text.is_empty() {
+            self.error = Some("Anna tulostekansio.".to_string());
+            cx.notify();
+            return;
+        }
+        let dir = util::expand_path(&dir_text);
+
+        let valuation = valuation.clone();
+        let property_id = valuation.property_id.clone();
+        let (tx, rx) = mpsc::channel();
+        self.export_rx = Some(rx);
+        self.exporting = true;
+        self.exported.clear();
+        self.error = None;
+        self.notice = None;
+
+        std::thread::spawn(move || {
+            let result = (|| -> color_eyre::Result<Vec<PathBuf>> {
+                std::fs::create_dir_all(&dir)?;
+                let excel_path = dir.join(util::generate_filename(&property_id, ".xlsx"));
+                let kml_path = dir.join(util::generate_filename(&property_id, ".kml"));
+                pipeline::write_excel(&valuation, &excel_path)?;
+                pipeline::write_kml(&valuation, &kml_path)?;
+                Ok(vec![kml_path, excel_path])
+            })();
+
+            let message = match result {
+                Ok(paths) => ExportMessage::Done(paths),
+                Err(error) => ExportMessage::Error(format!("{error:#}")),
+            };
+            let _ = tx.send(message);
+        });
+
+        cx.notify();
     }
 
-    // Yhdistetään kaikki palstat ja muutetaan ETRS-TM35FINiin.
-    let to_tm35 = Proj::new_known_crs(EPSG_WGS84, EPSG_TM35FIN, None)?;
-    let property_wgs84 = metsaval::geo_utils::union_all(&geometries_wgs84);
-    Ok(metsaval::geo_utils::transform(&property_wgs84, &to_tm35))
-}
+    /// Lukee taustasäikeiden viestit. Palauttaa `true`, jos tila muuttui.
+    fn poll(&mut self) -> bool {
+        let mut changed = false;
 
-fn config_file_path() -> Option<PathBuf> {
-    if let Some(home_dir) = std::env::home_dir() {
-        let config_dir = home_dir.join(".config/metsavaluaatio");
-        fs::create_dir_all(&config_dir).ok()?;
-        Some(config_dir.join("config.toml"))
-    } else {
-        None
+        if let Some(rx) = self.log_rx.take() {
+            for line in rx.try_iter() {
+                self.logs.push(line);
+                changed = true;
+            }
+            if changed {
+                self.log_scroll.scroll_to_bottom();
+            }
+            self.log_rx = Some(rx);
+        }
+
+        if let Some(rx) = self.done_rx.take() {
+            match rx.try_recv() {
+                Ok(Ok(valuation)) => {
+                    self.result = Some(valuation);
+                    self.running = false;
+                    self.log_rx = None;
+                    self.tab = Tab::Stands;
+                    self.notice = Some("Arvio valmis.".to_string());
+                    changed = true;
+                }
+                Ok(Err(error)) => {
+                    self.error = Some(error);
+                    self.running = false;
+                    self.log_rx = None;
+                    changed = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    self.done_rx = Some(rx);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.running = false;
+                    self.log_rx = None;
+                    self.error = Some("Taustatyö keskeytyi odottamatta.".to_string());
+                    changed = true;
+                }
+            }
+        }
+
+        if let Some(rx) = self.export_rx.take() {
+            match rx.try_recv() {
+                Ok(ExportMessage::Done(paths)) => {
+                    self.exported = paths;
+                    self.exporting = false;
+                    self.notice = Some("Tiedostot tallennettu.".to_string());
+                    changed = true;
+                }
+                Ok(ExportMessage::Error(error)) => {
+                    self.exporting = false;
+                    self.error = Some(error);
+                    changed = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    self.export_rx = Some(rx);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.exporting = false;
+                    self.error = Some("Tiedostojen tallennus keskeytyi.".to_string());
+                    changed = true;
+                }
+            }
+        }
+
+        changed
     }
-}
 
-/// Hakee ohjelman config.toml tiedoston
-fn load_config() -> Result<Config> {
-    let Some(config_file) = config_file_path() else {
-        return Err(eyre!("Kotihakemiston saaminen epäonnistui"));
-    };
+    fn header(&self, cx: &App) -> AnyElement {
+        let has_key = !&self.api_key.read(cx).value().to_string().is_empty();
 
-    load_config_from(&config_file)
-}
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .h(px(58.))
+            .px_5()
+            .bg(panel())
+            .border_b_1()
+            .border_color(border())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(text())
+                            .child("Metsävaluaatio"),
+                    )
+                    .text_color(muted())
+                    .child(VERSION),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(12.))
+                    .text_color(if has_key { green() } else { amber() })
+                    .child(if has_key {
+                        "● API-avain asetettu"
+                    } else {
+                        "● API-avain puuttuu"
+                    }),
+            )
+            .into_any_element()
+    }
 
-/// Lukee asetukset annetusta tiedostosta.
-fn load_config_from(path: &Path) -> Result<Config> {
-    let content = fs::read_to_string(path)?;
-    let config: Config = toml::from_str(&content)?;
+    fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let form = self.form(cx);
 
-    Ok(config)
-}
+        div()
+            .flex()
+            .flex_col()
+            .h_full()
+            .w(px(360.))
+            .flex_shrink_0()
+            .bg(panel())
+            .border_r_1()
+            .border_color(border())
+            .child(
+                div()
+                    .id("sidebar-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .overflow_y_scroll()
+                    .p_4()
+                    .child(form),
+            )
+            .into_any_element()
+    }
 
-/// Tallentaa annetun avaimen ohjelman config.toml tiedostoon
-fn set_api(key: &str) -> Result<()> {
-    if let Some(config_file) = config_file_path() {
-        write_api_key(&config_file, key)?;
-        println!(
-            "{GREEN}API avain onnistuneesti tallennettu{RESET} tiedostoon {}",
-            config_file.display()
+    fn form(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let code = util::pad_municipality_code(self.current_code(cx));
+        let known = code
+            .as_ref()
+            .and_then(|code| self.municipalities.get(code))
+            .cloned();
+
+        let mut form = div().flex().flex_col().gap_3().w_full();
+
+        form = form
+            .child(section_title("Haku"))
+            .child(field_label("Kiinteistötunnus"))
+            .child(Input::new(&self.property_id).bg(input_bg()));
+
+        form = form.child(match (self.use_gpkg, known) {
+            (true, _) => muted_text("Käytetään valmista GeoPackagea, kuntaa ei tarvita."),
+            (false, Some(name)) => div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(field_label("Kunta"))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(text())
+                        .child(format!("{name} ({})", code.unwrap_or_default())),
+                )
+                .into_any_element(),
+            (false, None) => match code {
+                Some(code) => div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(field_label(format!("Kunta (koodi {code})")))
+                    .child(Input::new(&self.municipality_input).bg(input_bg()))
+                    .child(muted_text(
+                        "Nimi tallennetaan, jotta sitä ei kysytä uudelleen.",
+                    ))
+                    .into_any_element(),
+                None => muted_text("Syötä ensin kiinteistötunnus."),
+            },
+        });
+
+        // Lisäasetukset-kokonaisuus. GPUI:ssa ei ole valmista haitarikomponenttia,
+        // joten avaaminen hoidetaan omalla rivillä.
+        let advanced_label = if self.show_advanced {
+            "▾ Lisäasetukset"
+        } else {
+            "▸ Lisäasetukset"
+        };
+        form = form.child(
+            div()
+                .id("advanced-toggle")
+                .flex()
+                .items_center()
+                .gap_1()
+                .cursor_pointer()
+                .text_size(px(13.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(muted())
+                .hover(|style| style.text_color(text()))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.show_advanced = !this.show_advanced;
+                    cx.notify();
+                }))
+                .child(advanced_label),
         );
-    } else {
-        println!(
-            "{RED}API avaimen tallentaminen epäonnistui{RESET} (hakemiston luominen epäonnistui)"
+
+        if self.show_advanced {
+            let mut advanced = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(bg())
+                .border_1()
+                .border_color(border())
+                .rounded_md()
+                .child(field_label("MML API-avain"))
+                .child(
+                    Input::new(&self.api_key)
+                        .content_type(InputContentType::Password)
+                        .mask_toggle()
+                        .bg(input_bg()),
+                )
+                .child(secondary_button(
+                    "save-api-key",
+                    "Tallenna avain",
+                    true,
+                    cx.listener(|this, _, _, cx| {
+                        let key = this.api_key.read(cx).value().to_string();
+                        match settings::save_api_key(&key) {
+                            Ok(path) => {
+                                this.notice =
+                                    Some(format!("API-avain tallennettu: {}", path.display()));
+                                this.error = None;
+                            }
+                            Err(error) => {
+                                this.error =
+                                    Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
+                            }
+                        }
+                        cx.notify();
+                    }),
+                ))
+                .child(div().h(px(1.)).w_full().bg(border()))
+                .child(checkbox_row(
+                    "use-gpkg",
+                    "Käytä valmista GeoPackagea",
+                    self.use_gpkg,
+                    cx.listener(|this, _, _, cx| {
+                        this.use_gpkg = !this.use_gpkg;
+                        cx.notify();
+                    }),
+                ));
+
+            if self.use_gpkg {
+                advanced = advanced
+                    .child(Input::new(&self.gpkg_path).bg(input_bg()))
+                    .child(muted_text(
+                        "Vältä lataus, kun haet useita kiinteistöjä samasta kunnasta.",
+                    ));
+            } else {
+                advanced = advanced
+                    .child(field_label("GeoPackagen latauskansio (valinnainen)"))
+                    .child(Input::new(&self.gpkg_download_dir).bg(input_bg()));
+            }
+
+            form = form.child(advanced);
+        }
+
+        let button_text = if self.running {
+            "Haetaan..."
+        } else {
+            "Hae arvio"
+        };
+        form = form.child(primary_button(
+            "run",
+            button_text,
+            !self.running,
+            cx.listener(|this, _, _, cx| this.start_run(cx)),
+        ));
+
+        if self.running {
+            form = form.child(muted_text("Haetaan tietoja verkosta..."));
+        }
+
+        if let Some(notice) = &self.notice {
+            form = form.child(
+                div()
+                    .text_size(px(13.))
+                    .text_color(green())
+                    .child(notice.clone()),
+            );
+        }
+
+        form = form
+            .child(div().h(px(1.)).w_full().bg(border()))
+            .child(field_label("Tulostekansio"))
+            .child(Input::new(&self.output_dir).bg(input_bg()))
+            .child(muted_text(
+                "Excel- ja KML-tiedostot kirjoitetaan tähän kansioon.",
+            ))
+            .child(secondary_button(
+                "export",
+                "Tallenna Excel + KML",
+                self.result.is_some() && !self.exporting && !self.running,
+                cx.listener(|this, _, _, cx| this.start_export(cx)),
+            ));
+
+        if self.exporting {
+            form = form.child(muted_text("Kirjoitetaan tiedostoja..."));
+        }
+
+        if !self.exported.is_empty() {
+            let mut exported = div().flex().flex_col().gap_1();
+            for path in &self.exported {
+                exported = exported.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_color(green()).child("✓"))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.))
+                                .text_size(px(11.))
+                                .font_family("monospace")
+                                .text_color(text())
+                                .child(path.display().to_string()),
+                        ),
+                );
+            }
+            form = form.child(exported);
+        }
+
+        form = form.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(small_button("open-mymaps", "Google My Maps", |_, _, _| {
+                    metsaval::maps::open_browser("https://www.google.com/mymaps");
+                }))
+                .child(small_button(
+                    "open-output",
+                    "Avaa tulostekansio",
+                    cx.listener(|this, _, _, cx| {
+                        let dir = this.output_dir.read(cx).value().to_string();
+                        if !dir.is_empty() {
+                            metsaval::maps::open_browser(
+                                &util::expand_path(&dir).display().to_string(),
+                            );
+                        }
+                    }),
+                )),
         );
-    }
-    Ok(())
-}
 
-/// Kirjoittaa API-avaimen annettuun config-tiedostoon.
-fn write_api_key(path: &Path, key: &str) -> Result<()> {
-    let api_string = format!("api_key = \"{key}\"");
-    fs::write(path, api_string)?;
-    Ok(())
-}
-
-/// Generoi ohjelman tuottamille tiedostoille nimen
-fn generate_filename(property_id: &str, suffix: &str) -> String {
-    let mut time = Local::now().trunc_subsecs(0).to_rfc3339().replace(":", "-");
-
-    // Poistaa ajasta kellonajan ja aikavyöhykkeen (esim 'T08-00-00 +0300')
-    if let Some(pos) = time.find('T') {
-        time.truncate(pos);
+        form.into_any_element()
     }
 
-    let mut filename = property_id.to_owned();
-    filename.push_str("__");
-    filename.push_str(&time);
-    filename.push_str(suffix);
-
-    filename
-}
-
-/// Ottaa kiinteistötunnuksesta koodin ennen ensimmäistä vipua (esim.
-/// `740-555-0002-0000` -> `740`).
-fn municipality_code(property_id: &str) -> Result<String> {
-    let Some(pos) = property_id.find('-') else {
-        return Err(eyre!("Virheellinen kiinteistötunnus"));
-    };
-
-    Ok(property_id[..pos].to_string())
-}
-
-fn parse_municipality(property_id: &str) -> Result<String> {
-    let code = municipality_code(property_id)?;
-
-    let path = municipality_file();
-    let mut municipalities = load_municipalities_from(path.as_deref());
-    let known = municipalities.contains_key(&code);
-
-    let stdin = std::io::stdin();
-    let municipality_name = resolve_municipality(
-        &mut municipalities,
-        &code,
-        &mut stdin.lock(),
-        &mut std::io::stdout(),
-    );
-
-    if !known {
-        save_municipalities_to(path.as_deref(), &municipalities);
+    fn welcome(&self) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_5()
+            .bg(panel())
+            .border_1()
+            .border_color(border())
+            .rounded_lg()
+            .child(
+                div()
+                    .text_size(px(22.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(text())
+                    .child("Metsäomaisuuden arvio"),
+            )
+            .child(muted_text(
+                "Syötä kiinteistötunnus ja hae arvio. Ohjelma hakee kiinteistön rajat, \
+                 metsävarakuviot ja puustotiedot sekä määrittää laskennallisen arvon.",
+            ))
+            .child(muted_text(
+                "Tulokset voi tallentaa Excel-yhteenvetona ja Google Maps -tasona (KML).",
+            ))
+            .into_any_element()
     }
 
-    Ok(municipality_name)
-}
+    fn content(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let mut root = div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w(px(0.))
+            .min_h(px(0.))
+            .gap_3()
+            .p_5()
+            .bg(bg());
 
-/// Etsii koodin vastaavan kunnan. Jos koodia ei ole tallennettu, kysyy kunnan
-/// käyttäjältä ja lisää sen listaan.
-fn resolve_municipality(
-    municipalities: &mut HashMap<String, String>,
-    code: &str,
-    reader: &mut impl BufRead,
-    writer: &mut impl Write,
-) -> String {
-    if let Some(name) = municipalities.get(code) {
-        return name.clone();
+        let mut error_banner = None;
+        if let Some(error) = &self.error {
+            error_banner = Some(
+                div()
+                    .p_3()
+                    .bg(rgb(0x3a1818))
+                    .border_1()
+                    .border_color(rgb(0x963737))
+                    .rounded_md()
+                    .text_size(px(13.))
+                    .text_color(red())
+                    .child(error.clone())
+                    .into_any_element(),
+            );
+        }
+
+        if let Some(error) = error_banner {
+            root = root.child(error);
+        }
+
+        let Some(valuation) = self.result.as_ref() else {
+            return root
+                .child(self.welcome())
+                .child(section_title("Tapahtumat"))
+                .child(self.log_view())
+                .into_any_element();
+        };
+
+        root = root
+            .child(self.result_header(valuation))
+            .child(self.stats(valuation))
+            .child(self.tabs_row(cx));
+
+        root = root.child(match self.tab {
+            Tab::Stands => self.stands_table(cx),
+            Tab::Species => self.species_table(cx),
+            Tab::Log => self.log_view(),
+        });
+
+        root.into_any_element()
     }
 
-    let new_municip = ask_municipality_from(reader, writer);
-    municipalities.insert(code.to_string(), new_municip.clone());
-    new_municip
+    fn result_header(&self, valuation: &Valuation) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(22.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(text())
+                            .child(valuation.property_id.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(muted())
+                            .child(valuation.municipality.clone().unwrap_or_default()),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .flex()
+                    .justify_end()
+                    .text_size(px(11.))
+                    .text_color(muted())
+                    .child(format!(
+                        "{} palstaa · {} · {}",
+                        valuation.parcel_count,
+                        valuation.stand_layer,
+                        valuation.gpkg_path.display()
+                    )),
+            )
+            .into_any_element()
+    }
+
+    fn stats(&self, valuation: &Valuation) -> AnyElement {
+        let net_color = if valuation.total_value() >= 0.0 {
+            green()
+        } else {
+            red()
+        };
+        let neutral = text();
+
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .child(stat_card(
+                "Laskennallinen arvo",
+                util::fmt_eur(valuation.total_value()),
+                net_color,
+            ))
+            .child(stat_card(
+                "Kiinteistön ala",
+                format!("{} ha", util::fmt_fi(valuation.property_area_ha, 2)),
+                neutral,
+            ))
+            .child(stat_card(
+                "Kuvioiden ala",
+                format!("{} ha", util::fmt_fi(valuation.totals.area_ha, 2)),
+                neutral,
+            ))
+            .child(stat_card(
+                "Puusto",
+                format!("{} m³", util::fmt_fi(valuation.totals.volume_m3, 0)),
+                neutral,
+            ))
+            .child(stat_card(
+                "Tulot",
+                util::fmt_eur(valuation.totals.income_eur),
+                neutral,
+            ))
+            .child(stat_card(
+                "Muuttuvat kulut",
+                util::fmt_eur(valuation.totals.costs_eur),
+                neutral,
+            ))
+            .child(stat_card(
+                "Kiinteät kulut",
+                util::fmt_eur(valuation.fixed_costs),
+                neutral,
+            ))
+            .child(stat_card(
+                "Kuvioita",
+                valuation.totals.stand_count.to_string(),
+                neutral,
+            ))
+            .into_any_element()
+    }
+
+    fn tabs_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(tab_button(
+                "tab-stands",
+                "Kuviot",
+                self.tab == Tab::Stands,
+                cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Stands;
+                    cx.notify();
+                }),
+            ))
+            .child(tab_button(
+                "tab-species",
+                "Puulajit",
+                self.tab == Tab::Species,
+                cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Species;
+                    cx.notify();
+                }),
+            ))
+            .child(tab_button(
+                "tab-log",
+                "Loki",
+                self.tab == Tab::Log,
+                cx.listener(|this, _, _, cx| {
+                    this.tab = Tab::Log;
+                    cx.notify();
+                }),
+            ))
+            .child(div().flex_1())
+            .child(small_button(
+                "open-mymaps-result",
+                "Avaa Google My Maps",
+                |_, _, _| {
+                    metsaval::maps::open_browser("https://www.google.com/mymaps");
+                },
+            ))
+            .into_any_element()
+    }
+
+    fn log_view(&self) -> AnyElement {
+        div()
+            .id("log-scroll")
+            .flex()
+            .flex_col()
+            .gap_1()
+            .flex_1()
+            .min_h(px(0.))
+            .p_3()
+            .bg(panel())
+            .border_1()
+            .border_color(border())
+            .rounded_md()
+            .overflow_y_scroll()
+            .track_scroll(&self.log_scroll)
+            .when(self.logs.is_empty(), |view| {
+                view.child(muted_text("Ei tapahtumia."))
+            })
+            .children(
+                self.logs
+                    .iter()
+                    .map(|line| {
+                        div()
+                            .text_size(px(12.))
+                            .font_family("monospace")
+                            .text_color(text())
+                            .child(line.clone())
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .into_any_element()
+    }
+
+    fn stands_table(&self, cx: &mut Context<Self>) -> AnyElement {
+        let count = self
+            .result
+            .as_ref()
+            .map(|valuation| valuation.stand_values.len())
+            .unwrap_or(0);
+
+        if count == 0 {
+            return muted_text("Ei kuvioita.");
+        }
+
+        let rows = cx.processor(move |this, range: Range<usize>, _, _| {
+            let Some(valuation) = this.result.as_ref() else {
+                return Vec::new();
+            };
+            range
+                .filter_map(|index| {
+                    valuation
+                        .stand_values
+                        .get(index)
+                        .map(|value| stand_row(index, value))
+                })
+                .collect::<Vec<_>>()
+        });
+
+        table("stands", &STAND_COLUMNS, count, rows)
+    }
+
+    fn species_table(&self, cx: &mut Context<Self>) -> AnyElement {
+        let count = self
+            .result
+            .as_ref()
+            .map(|valuation| valuation.species_summary.len())
+            .unwrap_or(0);
+
+        if count == 0 {
+            return muted_text("Ei puulajitietoja.");
+        }
+
+        let rows = cx.processor(move |this, range: Range<usize>, _, _| {
+            let Some(valuation) = this.result.as_ref() else {
+                return Vec::new();
+            };
+            range
+                .filter_map(|index| {
+                    valuation
+                        .species_summary
+                        .get(index)
+                        .map(|value| species_row(index, value))
+                })
+                .collect::<Vec<_>>()
+        });
+
+        table("species", &SPECIES_COLUMNS, count, rows)
+    }
 }
 
-fn municipality_file() -> Option<PathBuf> {
-    if let Some(home_dir) = std::env::home_dir() {
-        let local_dir = home_dir.join(".local/share/metsavaluaatio");
-        fs::create_dir_all(&local_dir).ok()?;
-        Some(local_dir.join("municipalities.json"))
+impl Render for MetsavalApp {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let header = self.header(cx);
+        let sidebar = self.sidebar(cx);
+        let content = self.content(cx);
+
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(bg())
+            .text_size(px(13.))
+            .text_color(text())
+            .child(header)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(sidebar)
+                    .child(content),
+            )
+    }
+}
+
+/// Taustasäikeen työ: luo Tokio-runtime ja ajaa koko hakukanavan.
+fn run_worker(options: Options, log_tx: Sender<String>) -> Result<Box<Valuation>, String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Taustasäikeen käynnistys epäonnistui: {error}"))?;
+
+    runtime
+        .block_on(pipeline::run(options, log_tx))
+        .map(Box::new)
+        .map_err(|error| format!("{error:#}"))
+}
+
+fn section_title(title: impl Into<SharedString>) -> AnyElement {
+    div()
+        .text_size(px(15.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(text())
+        .child(title.into())
+        .into_any_element()
+}
+
+fn field_label(label: impl Into<SharedString>) -> AnyElement {
+    div()
+        .text_size(px(12.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(muted())
+        .child(label.into())
+        .into_any_element()
+}
+
+fn muted_text(message: impl Into<SharedString>) -> AnyElement {
+    div()
+        .text_size(px(12.))
+        .text_color(muted())
+        .child(message.into())
+        .into_any_element()
+}
+
+// ---------------------------------------------------------------------------
+// Taulukot
+// ---------------------------------------------------------------------------
+
+const ROW_HEIGHT: f32 = 26.0;
+
+/// Sarakkeen otsikko ja leveys. Leveys 0 tarkoittaa joustavaa saraketta.
+struct Column {
+    title: &'static str,
+    width: f32,
+    monospace: bool,
+}
+
+const STAND_COLUMNS: [Column; 11] = [
+    Column {
+        title: "Kuvio",
+        width: 60.0,
+        monospace: true,
+    },
+    Column {
+        title: "Hakkuuehdotus",
+        width: 125.0,
+        monospace: false,
+    },
+    // Keski-ikä ?
+    Column {
+        title: "Runkoluku, kpl/ha",
+        width: 105.0,
+        monospace: true,
+    },
+    // Keskiläpimitta?
+    // Keskipituus?
+    Column {
+        title: "Ala, ha",
+        width: 70.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tilavuus m³/ha",
+        width: 95.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tukkia m³/ha",
+        width: 95.0,
+        monospace: true,
+    },
+    Column {
+        title: "Kuitua m³/ha",
+        width: 95.0,
+        monospace: true,
+    },
+    Column {
+        title: "Kasvu, %",
+        width: 70.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tulot, €",
+        width: 70.0,
+        monospace: false,
+    },
+    Column {
+        title: "Menot, €",
+        width: 70.0,
+        monospace: false,
+    },
+    Column {
+        title: "Netto, €",
+        width: 0.0,
+        monospace: false,
+    },
+];
+
+const SPECIES_COLUMNS: [Column; 13] = [
+    Column {
+        title: "Kuvio",
+        width: 70.0,
+        monospace: true,
+    },
+    Column {
+        title: "Puulaji",
+        width: 100.0,
+        monospace: false,
+    },
+    Column {
+        title: "Hakkuuehdotus",
+        width: 130.0,
+        monospace: false,
+    },
+    Column {
+        title: "Ikä, v",
+        width: 70.0,
+        monospace: true,
+    },
+    Column {
+        title: "Runkoluku, kpl/ha",
+        width: 105.0,
+        monospace: true,
+    },
+    Column {
+        title: "Keskiläpimitta, cm",
+        width: 105.0,
+        monospace: true,
+    },
+    Column {
+        title: "Keskipituus, cm",
+        width: 100.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tilavuus m³/ha",
+        width: 110.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tukkia m³/ha",
+        width: 110.0,
+        monospace: true,
+    },
+    Column {
+        title: "Kuitua m³/ha",
+        width: 110.0,
+        monospace: true,
+    },
+    Column {
+        title: "Tilavuuskasvu, %",
+        width: 110.0,
+        monospace: true,
+    },
+    Column {
+        title: "Arvokasvu, %",
+        width: 70.0,
+        monospace: false,
+    },
+    Column {
+        title: "Tulot, €",
+        width: 70.0,
+        monospace: false,
+    },
+];
+
+fn table(
+    id: &'static str,
+    columns: &'static [Column],
+    count: usize,
+    rows: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
+) -> AnyElement {
+    let content_width: f32 = columns
+        .iter()
+        .map(|column| {
+            if column.width <= 0.0 {
+                100.0
+            } else {
+                column.width
+            }
+        })
+        .sum::<f32>()
+        + 16.0;
+
+    let list_id = SharedString::from(format!("{id}-list"));
+
+    div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h(px(0.))
+        .bg(panel())
+        .border_1()
+        .border_color(border())
+        .rounded_md()
+        .overflow_hidden()
+        .child(
+            div().id(id).flex().flex_col().flex_1().min_h(px(0.)).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .min_w(px(content_width))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .h(px(30.))
+                            .px_2()
+                            .bg(input_bg())
+                            .border_b_1()
+                            .border_color(border())
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(muted())
+                            .children(columns.iter().map(|column| {
+                                column_cell(column)
+                                    .text_size(px(11.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(muted())
+                                    .child(column.title)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h(px(0.))
+                            .child(gpui_kit::uniform_list(list_id, count, rows).flex_1()),
+                    ),
+            ),
+        )
+        .overflow_scrollbar()
+        .into_any_element()
+}
+
+fn column_cell(column: &Column) -> Div {
+    let cell = div()
+        .flex()
+        .items_center()
+        .h_full()
+        .px_2()
+        .overflow_hidden()
+        .whitespace_nowrap();
+
+    let cell = if column.monospace {
+        cell.font_family("monospace")
     } else {
-        None
-    }
-}
-
-/// Hakee tallennetut kunnat annetusta tiedostosta. Puuttuva tai
-/// virheellinen tiedosto tulee tyhjäksi listaksi.
-fn load_municipalities_from(path: Option<&Path>) -> HashMap<String, String> {
-    let Some(json) = path.and_then(|path| read_to_string(path).ok()) else {
-        return HashMap::new();
+        cell
     };
 
-    serde_json::from_str(&json).unwrap_or_default()
-}
-
-/// Tallentaa kunnat annettuun tiedostoon. Virheitä ei raportoida.
-fn save_municipalities_to(path: Option<&Path>, municipalities: &HashMap<String, String>) {
-    let Some(path) = path else {
-        return;
-    };
-
-    if let Ok(json) = serde_json::to_string_pretty(municipalities) {
-        let _ = fs::write(path, json);
+    if column.width <= 0.0 {
+        cell.flex_1().min_w(px(100.))
+    } else {
+        cell.flex_shrink_0().w(px(column.width))
     }
 }
 
-/// Kysyy käyttäjältä kunnan, joka kyseiseen koodiin liitetään
-fn ask_municipality_from<R: BufRead, W: Write>(reader: &mut R, writer: &mut W) -> String {
-    let mut s = String::new();
-    let _ = write!(writer, "Syötä kunta: ");
-    let _ = writer.flush();
-    reader.read_line(&mut s).expect("Virheellinen syöte");
+fn monospace(value: impl Into<SharedString>, color: Hsla) -> Div {
+    div()
+        .text_size(px(12.))
+        .font_family("monospace")
+        .text_color(color)
+        .child(value.into())
+}
 
-    if let Some('\n') = s.chars().next_back() {
-        s.pop();
+fn text_cell(value: impl Into<SharedString>, color: Hsla) -> Div {
+    div()
+        .text_size(px(12.))
+        .text_color(color)
+        .child(value.into())
+}
+
+fn row_shell(index: usize) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .h(px(ROW_HEIGHT))
+        .px_2()
+        .border_b_1()
+        .border_color(border().opacity(0.45))
+        .when(index % 2 == 1, |row| row.bg(input_bg().opacity(0.35)))
+}
+
+fn stand_row(index: usize, value: &StandValue) -> AnyElement {
+    let net_color = if value.net_eur < 0.0 { red() } else { green() };
+    let area = value
+        .area
+        .map(|a| util::fmt_fi(a, 2))
+        .unwrap_or_else(|| "–".into());
+
+    let mut row = row_shell(index);
+
+    for column in &STAND_COLUMNS {
+        let cell = column_cell(column);
+        row = row.child(match column.title {
+            "Kuvio" => cell.child(monospace(
+                standtitle(value.standnumber, value.standid),
+                text(),
+            )),
+            "Hakkuuehdotus" => cell.child(text_cell(
+                cutting_text(value.cutting, value.cuttingproposalyear),
+                text(),
+            )),
+            "Runkoluku, kpl/ha" => cell.child(monospace(
+                util::fmt_fi(value.stemcount.unwrap_or(0.0), 0),
+                text(),
+            )),
+            "Ala, ha" => cell.child(monospace(area.clone(), text())),
+            "Tilavuus m³/ha" => cell.child(monospace(util::fmt_fi(value.volume, 1), text())),
+            "Tukkia m³/ha" => cell.child(monospace(util::fmt_fi(value.sawlogvolume, 1), text())),
+            "Kuitua m³/ha" => cell.child(monospace(util::fmt_fi(value.pulpwoodvolume, 1), text())),
+            "Kasvu, %" => cell.child(monospace(util::fmt_pct(value.growth_pct), text())),
+            "Tulot, €" => cell.child(monospace(util::fmt_eur(value.income_eur), text())),
+            "Menot, €" => cell.child(monospace(util::fmt_eur(value.costs_eur), text())),
+            _ => cell.child(text_cell(util::fmt_eur(value.net_eur), net_color)),
+        });
     }
-    if let Some('\r') = s.chars().next_back() {
-        s.pop();
+
+    row.into_any_element()
+}
+
+fn species_row(index: usize, value: &SpeciesSummary) -> AnyElement {
+    let age = value
+        .age
+        .map(|age| util::fmt_fi(age, 0))
+        .unwrap_or_else(|| "–".into());
+
+    let mut row = row_shell(index);
+
+    for column in &SPECIES_COLUMNS {
+        let cell = column_cell(column);
+        row = row.child(match column.title {
+            "Kuvio" => cell.child(monospace(
+                standtitle(value.standnumber, value.standid),
+                text(),
+            )),
+            "Puulaji" => cell.child(text_cell(value.species.name(), text())),
+            "Hakkuuehdotus" => cell.child(text_cell(
+                cutting_text(value.cutting, value.cuttingproposalyear),
+                text(),
+            )),
+            "Ikä, v" => cell.child(monospace(age.clone(), text())),
+            "Runkoluku, kpl/ha" => cell.child(monospace(util::fmt_fi(value.stemcount, 0), text())),
+            "Keskiläpimitta, cm" => cell.child(monospace(
+                util::fmt_fi(value.meandiameter.unwrap_or(0.0), 1),
+                text(),
+            )),
+            "Keskipituus, cm" => cell.child(monospace(
+                util::fmt_fi(value.meanheight.unwrap_or(0.0), 1),
+                text(),
+            )),
+            "Tilavuus m³/ha" => cell.child(monospace(util::fmt_fi(value.volume, 1), text())),
+            "Tukkia m³/ha" => cell.child(monospace(util::fmt_fi(value.sawlogvolume, 1), text())),
+            "Kuitua m³/ha" => cell.child(monospace(util::fmt_fi(value.pulpwoodvolume, 1), text())),
+            "Tilavuuskasvu, %" => cell.child(monospace(util::fmt_pct(value.growth_pct), text())),
+            "Arvokasvu, %" => cell.child(text_cell(util::fmt_pct(value.value_growth_pct), text())),
+            _ => cell.child(text_cell(util::fmt_eur(value.value_eur), green())),
+        });
     }
 
-    s
+    row.into_any_element()
 }
 
-fn remove_municipality(key: &str) {
-    remove_municipality_from(municipality_file().as_deref(), key);
-    println!("Kunta {YELLOW}{key}{RESET} poistettu");
-}
-
-/// Poistaa koodin tallennetujen kuntien listasta.
-fn remove_municipality_from(path: Option<&Path>, key: &str) {
-    let mut municipalities = load_municipalities_from(path);
-    municipalities.remove(key);
-    save_municipalities_to(path, &municipalities);
-}
-
-fn list_municipalities() {
-    list_municipalities_from(municipality_file().as_deref());
-}
-
-/// Tulostaa kaikki tallennetut kunnat ja niiden koodit.
-fn list_municipalities_from(path: Option<&Path>) {
-    let municipalities = load_municipalities_from(path);
-    for municipality in municipalities {
-        println!("{}: {}", municipality.0, municipality.1);
+fn cutting_text(cutting: Option<Cutting>, year: Option<i64>) -> String {
+    match (cutting, year) {
+        (Some(cutting), Some(year)) => format!("{} {year}", cutting.name()),
+        (Some(cutting), None) => cutting.name().to_string(),
+        (None, _) => "–".to_string(),
     }
 }
 
-fn print_usage() {
-    eprintln!(
-        "Käyttö: metsaval <KIINTEISTÖTUNNUS>
-    Lisätietoja: metsaval --help"
-    );
-}
-
-fn print_help() {
-    println!(
-        "METSÄVALUAATIO
-    Käyttö: metsaval <KIINTEISTÖTUNNUS> [-h | --help] [--kunta-lista] [--aseta-api <api>] [--poista-kunta <koodi>]
-
-        --help, -h      | Näytä tämä viesti
-        --kunta-lista   | listaa kaikki tallennetut kunnat ja niiden 3-numeroiset koodit
-        --aseta-api     | asettaa MML api-avaimen ohjelman config.toml tiedostoon
-        --poista-kunta  | poistaa kunnan ja sen 3-numeroisen koodin tallennettujen kuntien
-                        | listasta. Argumenttina vaatii 3-numeroisen koodin, ei kunnan nimeä
-        --gpkg-kohde    | Määrittää hakemiston johon GeoPackage ladataan, jos ei halua käyttää
-                        | vakio sijaintia (/tmp hakemistoa).
-        --gpkg-tiedosto | Määrittää tiedoston josta GeoPackage haetaan. Tämä voi olla hyödyllinen,
-                        | jos haluaa hakea tiedot useammasta kiinteistöstä samassa kunnassa, niin
-                        | ei tarvitse joka kerta ladata GeoPackagea uudestaan. Ohjelma tulostaa
-                        | aina käytetyn GeoPackagen sijainnin, sitä voi käyttää uudestaan jos
-                        | tietää kunnan olevan oikea.
-        --selain        | Avaa selaimen automaattisesti mymaps sivulla
-
-    Ohjelmalle annetaan argumenttina halutun kiinteistön kiinteistönumero. Jos samassa
-    kunnassa ei ole aikaisemmin haettu kiinteistön tietoja, ohjelma kysyy kunnan nimen
-    ja tallentaa sen."
-    );
+fn standtitle(standnumber: Option<i64>, standid: i64) -> String {
+    match standnumber {
+        Some(number) => number.to_string(),
+        None => standid.to_string(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Yksilöllinen polku järjestelmän väliaikaiskansioon testiä varten.
-    fn temp_path(name: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!("metsaval_main_{}_{}", std::process::id(), name));
-        path
-    }
-
-    /// Jäsentää argumentit samoin kuin ohjelma käynnistyksessä.
-    fn parse(args: &[&str]) -> Command {
-        parse_options(flagger::parse_args(cli_flags(), Some(args)).unwrap())
-    }
-
     #[test]
-    fn property_id_is_padded_to_full_length() {
+    fn cutting_text_combines_type_and_year() {
         assert_eq!(
-            pad_property_id("12-345-6-789").unwrap(),
-            "012-345-0006-0789"
+            cutting_text(Some(Cutting::Uudistus), Some(2030)),
+            "uudistus 2030"
         );
-        assert_eq!(
-            pad_property_id("001-002-0003-0004").unwrap(),
-            "001-002-0003-0004"
-        );
-        assert_eq!(pad_property_id("740-555-2-4").unwrap(), "740-555-0002-0004");
+        assert_eq!(cutting_text(Some(Cutting::Harvennus), None), "harvennus");
+        assert_eq!(cutting_text(None, Some(2030)), "–");
     }
 
     #[test]
-    fn property_id_with_wrong_part_count_is_rejected() {
-        assert!(pad_property_id("12345678901234").is_err());
-        assert!(pad_property_id("12-345-6").is_err());
-        assert!(pad_property_id("").is_err());
-        assert!(pad_property_id("12-345-6-789-0").is_err());
-    }
-
-    #[test]
-    fn property_id_with_too_long_parts_is_rejected() {
-        assert!(pad_property_id("1234-345-6-789").is_err());
-        assert!(pad_property_id("12-345-67890-789").is_err());
-        assert!(pad_property_id("12345-345-6-789").is_err());
-    }
-
-    #[test]
-    fn property_id_parts_of_exact_length_are_kept_as_they_are() {
-        assert_eq!(
-            pad_property_id("12-345-6-7890").unwrap(),
-            "012-345-0006-7890"
-        );
-        assert_eq!(pad_property_id("123-4-5-6").unwrap(), "123-004-0005-0006");
-    }
-
-    #[test]
-    fn filename_contains_property_id_date_and_suffix() {
-        let name = generate_filename("12-345-6-789", ".kml");
-        assert!(name.starts_with("12-345-6-789__"), "nimi: {name}");
-        assert!(name.ends_with(".kml"), "nimi: {name}");
-
-        // Päivämäärä muodossa YYYY-MM-DD ilman kellonaikaa
-        let middle = name
-            .trim_start_matches("12-345-6-789__")
-            .trim_end_matches(".kml");
-        assert_eq!(middle.len(), 10, "aikaleima: {middle}");
-        assert!(!middle.contains('T'), "aikaleima: {middle}");
-        assert!(!middle.contains(':'), "aikaleima: {middle}");
-        assert!(middle.starts_with("20"), "aikaleima: {middle}");
-
-        let excel_name = generate_filename("001-002-0003-0004", ".xlsx");
-        assert!(excel_name.starts_with("001-002-0003-0004__"));
-        assert!(excel_name.ends_with(".xlsx"));
-    }
-
-    #[test]
-    fn filename_is_stable_within_the_same_day() {
-        let first = generate_filename("1-2-3-4", ".kml");
-        let second = generate_filename("1-2-3-4", ".kml");
-        // Molemmat koostuvat samasta päivämäärämuotoisesta aikaleimasta
-        for name in [first, second] {
-            let middle = name
-                .trim_start_matches("1-2-3-4__")
-                .trim_end_matches(".kml");
-            assert_eq!(middle.len(), 10, "aikaleima: {middle}");
-            assert!(middle.starts_with("20"), "aikaleima: {middle}");
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // parse_options
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn help_flags_select_the_help_command() {
-        assert_eq!(parse(&["--help"]), Command::Help);
-        assert_eq!(parse(&["-h"]), Command::Help);
-        assert_eq!(parse(&["--selain", "--help"]), Command::Help);
-    }
-
-    #[test]
-    fn municipality_list_flag_selects_the_list_command() {
-        assert_eq!(parse(&["--kunta-lista"]), Command::ListMunicipalities);
-    }
-
-    #[test]
-    fn value_flags_select_their_own_commands() {
-        assert_eq!(
-            parse(&["--aseta-api", "avain123"]),
-            Command::SetApi("avain123".to_string())
-        );
-        assert_eq!(
-            parse(&["--poista-kunta", "740"]),
-            Command::RemoveMunicipality("740".to_string())
-        );
-        // Palvelukset hoituvat ennen kiinteistötunnusta
-        assert_eq!(
-            parse(&["740-555-0002-0000", "--aseta-api", "avain123"]),
-            Command::SetApi("avain123".to_string())
-        );
-    }
-
-    #[test]
-    fn browser_flag_is_recorded_for_the_run() {
-        let Command::Run(options) = parse(&["740-555-0002-0000", "--selain"]) else {
-            panic!("odotettiin Run-komentoa");
-        };
-        assert!(options.open_browser);
-        assert_eq!(options.property_id, "740-555-0002-0000");
-    }
-
-    #[test]
-    fn run_defaults_to_printing_the_maps_url() {
-        let Command::Run(options) = parse(&["740-555-0002-0000"]) else {
-            panic!("odotettiin Run-komentoa");
-        };
-        assert!(!options.open_browser);
-        assert!(options.gpkg_path.is_empty());
-        assert!(options.gpkg_download_dir.is_empty());
-    }
-
-    #[test]
-    fn gpkg_options_are_recorded_for_the_run() {
-        let Command::Run(options) = parse(&[
-            "--gpkg-kohde",
-            "/tmp/kohde",
-            "--gpkg-tiedosto",
-            "/tmp/data.gpkg",
-            "740-555-0002-0000",
-        ]) else {
-            panic!("odotettiin Run-komentoa");
-        };
-        assert_eq!(options.gpkg_download_dir, PathBuf::from("/tmp/kohde"));
-        assert_eq!(options.gpkg_path, PathBuf::from("/tmp/data.gpkg"));
-        assert_eq!(options.property_id, "740-555-0002-0000");
-    }
-
-    #[test]
-    fn missing_or_ambiguous_property_ids_select_usage() {
-        assert_eq!(parse(&[]), Command::Usage);
-        assert_eq!(parse(&["--selain"]), Command::Usage);
-        assert_eq!(
-            parse(&["740-555-0002-0000", "toinen-tunnus"]),
-            Command::Usage
-        );
-    }
-
-    #[test]
-    fn help_and_usage_texts_are_printed() {
-        print_help();
-        print_usage();
-    }
-
-    // -----------------------------------------------------------------------
-    // Apufunktiot laskennalle ja tiedostojenkäsittelylle
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn format_bbox_uses_the_bounds_and_the_tm35fin_crs() {
-        assert_eq!(
-            format_bbox((385_000.0, 6_700_000.0, 385_100.0, 6_700_100.0)),
-            "385000,6700000,385100,6700100,EPSG:3067"
-        );
-    }
-
-    #[test]
-    fn stand_ids_are_sorted_and_deduplicated() {
-        let stands = vec![
-            Stand {
-                standid: Some(3),
-                ..Stand::default()
-            },
-            Stand {
-                standid: Some(1),
-                ..Stand::default()
-            },
-            Stand {
-                standid: Some(1),
-                ..Stand::default()
-            },
-            Stand::default(),
-        ];
-        assert_eq!(collect_stand_ids(&stands).unwrap(), vec![1, 3]);
-    }
-
-    #[test]
-    fn stands_without_stand_ids_are_an_error() {
-        assert!(collect_stand_ids(&[Stand::default()]).is_err());
-        assert!(collect_stand_ids(&[]).is_err());
-    }
-
-    /// Kiinteistön palsta WGS84-koordinaatistossa (n. 110 m × 110 m).
-    fn wgs84_parcel(min_lon: f64, min_lat: f64) -> geojson::Feature {
-        serde_json::from_value(serde_json::json!({
-            "type": "Feature",
-            "geometry": {"type": "Polygon", "coordinates": [[
-                [min_lon, min_lat],
-                [min_lon + 0.001, min_lat],
-                [min_lon + 0.001, min_lat + 0.001],
-                [min_lon, min_lat + 0.001],
-                [min_lon, min_lat]
-            ]]},
-            "properties": {"kiinteistotunnus": "74055500020000"}
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn combine_property_geometries_unions_and_projects_the_parcels() {
-        let features = vec![wgs84_parcel(24.0, 60.0), wgs84_parcel(24.002, 60.002)];
-        let geometry = combine_property_geometries("740-555-0002-0000", &features).unwrap();
-
-        assert!(!geometry.is_empty());
-        assert_eq!(
-            metsaval::geo_utils::geometry_type(&geometry),
-            "MultiPolygon"
-        );
-
-        // Koordinaatit on muutettu ETRS-TM35FINiin
-        let (min_x, min_y, max_x, max_y) = metsaval::geo_utils::bounds(&geometry).unwrap();
-        assert!(
-            (100_000.0..=800_000.0).contains(&min_x) && (100_000.0..=800_000.0).contains(&max_x),
-            "TM35FIN x-koordinaatit: {min_x}..{max_x}"
-        );
-        assert!(
-            (6_000_000.0..=7_800_000.0).contains(&min_y)
-                && (6_000_000.0..=7_800_000.0).contains(&max_y),
-            "TM35FIN y-koordinaatit: {min_y}..{max_y}"
-        );
-    }
-
-    #[test]
-    fn combine_property_geometries_rejects_an_empty_feature_list() {
-        let err = combine_property_geometries("740-555-0002-0000", &[]).unwrap_err();
-        assert!(err.to_string().contains("ei löytynyt palstoja"));
-    }
-
-    #[test]
-    fn combine_property_geometries_rejects_features_without_geometry() {
-        let mut feature = wgs84_parcel(24.0, 60.0);
-        feature.geometry = None;
-
-        let err = combine_property_geometries("740-555-0002-0000", &[feature]).unwrap_err();
-        assert!(err.to_string().contains("ei ollut geometriaa"));
-    }
-
-    #[test]
-    fn municipality_code_is_the_part_before_the_first_dash() {
-        assert_eq!(municipality_code("740-555-0002-0000").unwrap(), "740");
-        assert_eq!(municipality_code("1-2").unwrap(), "1");
-        assert!(municipality_code("74055500020000").is_err());
-        assert!(municipality_code("").is_err());
-    }
-
-    #[test]
-    fn resolve_municipality_returns_known_names_without_asking() {
-        let mut municipalities = HashMap::from([("740".to_string(), "Testila".to_string())]);
-        let mut input: &[u8] = b"";
-        let mut prompt = Vec::new();
-
-        let name = resolve_municipality(&mut municipalities, "740", &mut input, &mut prompt);
-        assert_eq!(name, "Testila");
-        assert!(prompt.is_empty(), "kysymystä ei pitäisi tulla");
-    }
-
-    #[test]
-    fn resolve_municipality_asks_for_unknown_codes_and_stores_the_answer() {
-        let mut municipalities = HashMap::new();
-        let mut input: &[u8] = b"Uusikaupunki\n";
-        let mut prompt = Vec::new();
-
-        let name = resolve_municipality(&mut municipalities, "577", &mut input, &mut prompt);
-        assert_eq!(name, "Uusikaupunki");
-        assert_eq!(
-            municipalities.get("577").map(String::as_str),
-            Some("Uusikaupunki")
-        );
-        assert!(String::from_utf8_lossy(&prompt).contains("Syötä kunta:"));
-    }
-
-    #[test]
-    fn municipalities_round_trip_through_a_json_file() {
-        let path = temp_path("municipalities.json");
-        let municipalities = HashMap::from([
-            ("740".to_string(), "Testila".to_string()),
-            ("577".to_string(), "Toinen kunta".to_string()),
-        ]);
-
-        save_municipalities_to(Some(&path), &municipalities);
-        assert_eq!(load_municipalities_from(Some(&path)), municipalities);
-
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn a_missing_municipality_file_is_an_empty_list() {
-        let path = temp_path("ei_ole_municipalities.json");
-        let _ = fs::remove_file(&path);
-
-        assert!(load_municipalities_from(Some(&path)).is_empty());
-        assert!(load_municipalities_from(None).is_empty());
-        // Polkua ei ole, joten tallennus on hiljainen no-op
-        save_municipalities_to(None, &HashMap::new());
-    }
-
-    #[test]
-    fn a_broken_municipality_file_is_an_empty_list() {
-        let path = temp_path("broken_municipalities.json");
-        fs::write(&path, "tämä ei ole jsonia").unwrap();
-
-        assert!(load_municipalities_from(Some(&path)).is_empty());
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn removing_a_municipality_rewrites_the_file() {
-        let path = temp_path("remove_municipality.json");
-        let municipalities = HashMap::from([
-            ("740".to_string(), "Testila".to_string()),
-            ("577".to_string(), "Toinen kunta".to_string()),
-        ]);
-        save_municipalities_to(Some(&path), &municipalities);
-
-        remove_municipality_from(Some(&path), "740");
-
-        let loaded = load_municipalities_from(Some(&path));
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded.get("577").map(String::as_str), Some("Toinen kunta"));
-
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn listing_municipalities_prints_every_entry() {
-        let path = temp_path("list_municipalities.json");
-        save_municipalities_to(
-            Some(&path),
-            &HashMap::from([("740".to_string(), "Testila".to_string())]),
-        );
-
-        list_municipalities_from(Some(&path));
-
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn config_is_read_from_the_given_file() {
-        let path = temp_path("config.toml");
-        fs::write(&path, "api_key = \"avain123\"").unwrap();
-
-        let config = load_config_from(&path).unwrap();
-        assert_eq!(config.api_key, "avain123");
-
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn a_missing_or_broken_config_is_an_error() {
-        let missing = temp_path("ei_ole_config.toml");
-        let _ = fs::remove_file(&missing);
-        assert!(load_config_from(&missing).is_err());
-
-        let broken = temp_path("broken_config.toml");
-        fs::write(&broken, "avain = {").unwrap();
-        assert!(load_config_from(&broken).is_err());
-
-        let _ = fs::remove_file(&broken);
-    }
-
-    #[test]
-    fn write_api_key_produces_a_readable_config() {
-        let path = temp_path("api_key_config.toml");
-        write_api_key(&path, "avain123").unwrap();
-
-        assert_eq!(load_config_from(&path).unwrap().api_key, "avain123");
-        let _ = fs::remove_file(&path);
-    }
-
-    #[test]
-    fn confirmation_accepts_yes_and_no() {
-        let mut prompt = Vec::new();
-        assert!(ask_confirmation_from(&mut &b"y\n"[..], &mut prompt));
-        assert!(ask_confirmation_from(&mut &b"Y\n"[..], &mut prompt));
-        assert!(!ask_confirmation_from(&mut &b"n\n"[..], &mut prompt));
-        // Windows-rivinvaihto pureutuu myös
-        assert!(!ask_confirmation_from(&mut &b"N\r\n"[..], &mut prompt));
-
-        let text = String::from_utf8_lossy(&prompt).to_string();
-        assert!(text.contains("Haluatko luoda"), "kehoite: {text}");
-        assert!(text.contains("[y/n]"), "kehoite: {text}");
-    }
-
-    #[test]
-    fn confirmation_retries_until_a_valid_answer_arrives() {
-        let mut prompt = Vec::new();
-        assert!(ask_confirmation_from(&mut &b"k\ny\n"[..], &mut prompt));
-        assert!(!ask_confirmation_from(&mut &b"x\nn\n"[..], &mut prompt));
-    }
-
-    #[test]
-    fn municipality_prompt_reads_one_line_and_trims_the_newline() {
-        let mut prompt = Vec::new();
-        assert_eq!(
-            ask_municipality_from(&mut &b"Testila\n"[..], &mut prompt),
-            "Testila"
-        );
-        assert_eq!(
-            ask_municipality_from(&mut &b"Toinen\r\n"[..], &mut prompt),
-            "Toinen"
-        );
-        assert_eq!(
-            String::from_utf8(prompt).unwrap(),
-            "Syötä kunta: Syötä kunta: "
-        );
+    fn stand_title_prefers_the_stand_number() {
+        assert_eq!(standtitle(Some(7), 100), "7");
+        assert_eq!(standtitle(None, 100), "100");
     }
 }

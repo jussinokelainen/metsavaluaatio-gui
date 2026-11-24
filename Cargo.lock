@@ -4103,7 +4103,27 @@ dependencies = [
 
 [[package]]
 name = "metsaval"
-version = "0.2.0"
+version = "1.0.0"
+source = "git+https://github.com/jussinokelainen/metsavaluaatio-core.git?tag=1.0.0#70ed6c7729c9af1fe9fc7b5ff529519128dd56c1"
+dependencies = [
+ "color-eyre",
+ "geo",
+ "geojson",
+ "minidom",
+ "proj",
+ "rand 0.10.3",
+ "reqwest",
+ "rusqlite",
+ "rust_xlsxwriter",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zip 9.0.1",
+]
+
+[[package]]
+name = "metsaval-gui"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "color-eyre",
@@ -4111,6 +4131,7 @@ dependencies = [
  "geo",
  "geojson",
  "gpui-kit",
+ "metsaval",
  "minidom",
  "proj",
  "rand 0.10.3",

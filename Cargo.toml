@@ -1,20 +1,14 @@
 [package]
-name = "metsaval"
-version = "0.2.0"
+name = "metsaval-gui"
+version = "0.2.1"
 edition = "2024"
-# Tämä repo on GUI-haara: `cargo run` käynnistää graafisen sovelluksen.
-default-run = "metsaval-gui"
 
-[features]
-# Graafinen käyttöliittymä on oletuksena käytössä.
-# Pelkän CLI:n voi rakentaa: cargo build --no-default-features
-default = ["gui"]
-gui = []
-# GPUI:n testituen voi ottaa käyttöön testeissä:
-# cargo test --features gui-test-support --bin metsaval-gui
-gui-test-support = ["gui"]
 
 [dependencies]
+metsaval = {
+    git = "https://github.com/jussinokelainen/metsavaluaatio-core.git",
+    tag = "1.0.0",
+}
 color-eyre = "0.6.5"
 geo = "0.33.1"
 proj = "0.31.0"
@@ -32,15 +26,6 @@ rand = "0.10.3"
 dirs = "7.0.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 gpui-kit = "0.10.0"
-
-[[bin]]
-name = "metsaval"
-path = "src/main.rs"
-
-[[bin]]
-name = "metsaval-gui"
-path = "src/bin/metsaval-gui/main.rs"
-required-features = ["gui"]
 
 [profile.dev]
 debug = "line-tables-only"
