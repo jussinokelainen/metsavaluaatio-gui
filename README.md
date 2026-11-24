@@ -96,25 +96,3 @@ Cargolla asennettuna:
 ```bash
 cargo uninstall metsaval
 ```
-
-Testit
-------
-
-Kirjaston ja CLI:n testit:
-
-```bash
-cargo test --no-default-features
-```
-
-GUI-binäärin testit:
-
-```bash
-cargo test --bin metsaval-gui
-```
-
-GPUI-käyttöliittymän vuorovaikutustestit (tekstikentät, näppäimet, leikepöytä):
-
-```bash
-cargo test --features gui-test-support --bin metsaval-gui
-```
-
