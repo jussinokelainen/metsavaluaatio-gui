@@ -45,7 +45,6 @@ pub struct Valuation {
     pub raw_rows: Vec<RawRow>,
     pub fixed_costs: f64,
     pub totals: Totals,
-    pub gpkg_path: PathBuf,
     pub stand_layer: String,
 }
 
@@ -244,7 +243,6 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
         raw_rows,
         fixed_costs,
         totals,
-        gpkg_path,
         stand_layer,
     })
 }
@@ -365,7 +363,6 @@ mod tests {
                 net_eur: 1_000.0,
                 ..Totals::default()
             },
-            gpkg_path: PathBuf::new(),
             stand_layer: String::new(),
         };
 

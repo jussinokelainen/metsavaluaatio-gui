@@ -787,10 +787,8 @@ impl MetsavalApp {
                     .text_size(px(11.))
                     .text_color(muted())
                     .child(format!(
-                        "{} palstaa · {} · {}",
-                        valuation.parcel_count,
-                        valuation.stand_layer,
-                        valuation.gpkg_path.display()
+                        "{} palstaa · {}",
+                        valuation.parcel_count, valuation.stand_layer,
                     )),
             )
             .into_any_element()
