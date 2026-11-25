@@ -34,5 +34,14 @@
     "tag": "NONE",
     "file": "NO_FILE",
     "line": 1
+  },
+  {
+    "title": "apikey",
+    "content": "siirrä apikey options structiin ja tiedostoon, kuitenkin siten että käyttäjän ei tarvii asettaa sitä uudestaan tai jotain",
+    "time": 1795631172,
+    "priority": 6,
+    "tag": "NONE",
+    "file": "NO_FILE",
+    "line": 1
   }
 ]

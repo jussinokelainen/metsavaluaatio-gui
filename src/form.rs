@@ -36,9 +36,7 @@ pub fn prepare_run(
 ) -> Result<PreparedRun, String> {
     let api_key = form.api_key.trim().to_string();
     if api_key.is_empty() {
-        return Err(
-            "MML API-avain puuttuu. Lisää se vasemman paneelin Lisäasetukset-osiossa.".to_string(),
-        );
+        return Err("MML API-avain puuttuu. Lisää se asetuksista (⚙).".to_string());
     }
 
     let property_id =

@@ -13,6 +13,7 @@ mod util;
 use form::{RunForm, prepare_run};
 use gpui_kit::assets::Assets;
 use gpui_kit::base::Root;
+use gpui_kit::component::IconName;
 use gpui_kit::component::input::{Input, InputContentType, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::{
@@ -32,9 +33,11 @@ use metsaval_core::model::{SpeciesSummary, StandValue};
 
 use pipeline::{Options, Valuation};
 use ui::{
-    amber, bg, border, checkbox_row, green, input_bg, muted, panel, primary_button, red,
+    amber, bg, border, green, icon_button, input_bg, muted, panel, primary_button, red,
     secondary_button, small_button, stat_card, tab_button, text,
 };
+
+use crate::settings::GlobalOptions;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -105,8 +108,9 @@ enum ExportMessage {
 struct MetsavalApp {
     // Asetukset
     api_key: Entity<InputState>,
-    show_advanced: bool,
+    settings_open: bool,
     municipalities: HashMap<String, String>,
+    opts: GlobalOptions,
 
     // Hakukanavan kentät
     property_id: Entity<InputState>,
@@ -151,8 +155,9 @@ impl MetsavalApp {
 
         let app = Self {
             api_key,
-            show_advanced: api_key_text.trim().is_empty(),
+            settings_open: api_key_text.trim().is_empty(),
             municipalities: settings::load_municipalities(),
+            opts: settings::load_options(),
             property_id: cx.new(|cx| InputState::new(window, cx).placeholder("esim. 123-45-6-789")),
             municipality_input: cx.new(|cx| InputState::new(window, cx).placeholder("Kunnan nimi")),
             use_gpkg: false,
@@ -392,8 +397,45 @@ impl MetsavalApp {
         changed
     }
 
-    fn header(&self, cx: &App) -> AnyElement {
-        let has_key = !&self.api_key.read(cx).value().to_string().is_empty();
+    fn header(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let has_key = !self.api_key.read(cx).value().to_string().is_empty();
+
+        let title = if self.settings_open {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(icon_button(
+                    "back-to-main",
+                    IconName::ArrowLeft,
+                    cx.listener(|this, _, _, cx| {
+                        this.settings_open = false;
+                        settings::save_options(&this.opts);
+                        cx.notify();
+                    }),
+                ))
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(text())
+                        .child("Asetukset"),
+                )
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(FontWeight::BOLD)
+                        .text_color(text())
+                        .child("Metsävaluaatio"),
+                )
+                .text_color(muted())
+                .child(VERSION)
+        };
 
         div()
             .flex()
@@ -404,21 +446,7 @@ impl MetsavalApp {
             .bg(panel())
             .border_b_1()
             .border_color(border())
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_size(px(20.))
-                            .font_weight(FontWeight::BOLD)
-                            .text_color(text())
-                            .child("Metsävaluaatio"),
-                    )
-                    .text_color(muted())
-                    .child(VERSION),
-            )
+            .child(title)
             .child(
                 div()
                     .flex()
@@ -430,6 +458,16 @@ impl MetsavalApp {
                         "● API-avain asetettu"
                     } else {
                         "● API-avain puuttuu"
+                    })
+                    .when(!self.settings_open, |right| {
+                        right.child(icon_button(
+                            "open-settings",
+                            IconName::Settings,
+                            cx.listener(|this, _, _, cx| {
+                                this.settings_open = true;
+                                cx.notify();
+                            }),
+                        ))
                     }),
             )
             .into_any_element()
@@ -504,85 +542,39 @@ impl MetsavalApp {
             },
         });
 
-        // Lisäasetukset-kokonaisuus. GPUI:ssa ei ole valmista haitarikomponenttia,
-        // joten avaaminen hoidetaan omalla rivillä.
-        let advanced_label = if self.show_advanced {
-            "▾ Lisäasetukset"
-        } else {
-            "▸ Lisäasetukset"
-        };
-        form = form.child(
-            div()
-                .id("advanced-toggle")
-                .flex()
-                .items_center()
-                .gap_1()
-                .cursor_pointer()
-                .text_size(px(13.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(muted())
-                .hover(|style| style.text_color(text()))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.show_advanced = !this.show_advanced;
-                    cx.notify();
-                }))
-                .child(advanced_label),
-        );
-
-        if self.show_advanced {
-            let mut advanced = div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_3()
-                .bg(bg())
-                .border_1()
-                .border_color(border())
-                .rounded_md()
-                .child(field_label("MML API-avain"))
-                .child(
-                    Input::new(&self.api_key)
-                        .content_type(InputContentType::Password)
-                        .mask_toggle()
-                        .bg(input_bg()),
-                )
-                .child(secondary_button(
-                    "save-api-key",
-                    "Tallenna avain",
-                    true,
-                    cx.listener(|this, _, _, cx| {
-                        let key = this.api_key.read(cx).value().to_string();
-                        match settings::save_api_key(&key) {
-                            Ok(path) => {
-                                this.notice =
-                                    Some(format!("API-avain tallennettu: {}", path.display()));
-                                this.error = None;
-                            }
-                            Err(error) => {
-                                this.error =
-                                    Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
-                            }
-                        }
-                        cx.notify();
-                    }),
-                ))
-                .child(div().h(px(1.)).w_full().bg(border()))
-                .child(checkbox_row(
-                    "use-gpkg",
-                    "Käytä valmista GeoPackagea",
-                    self.use_gpkg,
-                    cx.listener(|this, _, _, cx| {
-                        this.use_gpkg = !this.use_gpkg;
-                        cx.notify();
-                    }),
-                ));
-
-            if self.use_gpkg {
-                advanced = advanced
-                    .child(Input::new(&self.gpkg_path).bg(input_bg()))
-                    .child(muted_text("Käytä omaa GeoPackagea (ei suositeltavaa)."));
-            }
-            form = form.child(advanced);
+        // Sovelluksen laajuiset asetukset (API-avain, GeoPackage) ovat omalla
+        // asetussivullaan, jonne pääsee yläpalkin rataskuvakkeesta.
+        if self.api_key.read(cx).value().trim().is_empty() {
+            form = form.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_3()
+                    .bg(input_bg())
+                    .border_1()
+                    .border_color(amber())
+                    .rounded_md()
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(amber())
+                            .child("MML API-avain puuttuu"),
+                    )
+                    .child(muted_text(
+                        "Lisää avain asetuksista ennen kuin haet arvion.",
+                    ))
+                    .child(secondary_button(
+                        "sidebar-open-settings",
+                        "Avaa asetukset",
+                        true,
+                        cx.listener(|this, _, _, cx| {
+                            this.settings_open = true;
+                            cx.notify();
+                        }),
+                    )),
+            );
         }
 
         let button_text = if self.running {
@@ -700,6 +692,97 @@ impl MetsavalApp {
             .child(muted_text(
                 "Tulokset voi tallentaa Excel-yhteenvetona ja Google Maps -tasona (KML).",
             ))
+            .into_any_element()
+    }
+
+    /// Sovelluksen laajuiset asetukset. Uudet asetukset voi lisätä omiksi
+    /// korteikseen tänne.
+    fn settings_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let config_path = settings::config_file_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "–".to_string());
+
+        let mut page = div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .w_full()
+            .max_w(px(760.))
+            .mx_auto();
+
+        if let Some(error) = &self.error {
+            page = page.child(
+                div()
+                    .p_3()
+                    .bg(rgb(0x3a1818))
+                    .border_1()
+                    .border_color(rgb(0x963737))
+                    .rounded_md()
+                    .text_size(px(13.))
+                    .text_color(red())
+                    .child(error.clone()),
+            );
+        }
+
+        if let Some(notice) = &self.notice {
+            page = page.child(
+                div()
+                    .p_3()
+                    .bg(input_bg())
+                    .border_1()
+                    .border_color(border())
+                    .rounded_md()
+                    .text_size(px(13.))
+                    .text_color(green())
+                    .child(notice.clone()),
+            );
+        }
+
+        let api_key_card = settings_card(
+            "MML API-avain",
+            format!("Avain tallennetaan tiedostoon {config_path}."),
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    Input::new(&self.api_key)
+                        .content_type(InputContentType::Password)
+                        .mask_toggle()
+                        .bg(input_bg()),
+                )
+                .child(secondary_button(
+                    "settings-save-api-key",
+                    "Tallenna avain",
+                    true,
+                    cx.listener(|this, _, _, cx| {
+                        let key = this.api_key.read(cx).value().to_string();
+                        match settings::save_api_key(&key) {
+                            Ok(path) => {
+                                this.notice =
+                                    Some(format!("API-avain tallennettu: {}", path.display()));
+                                this.error = None;
+                            }
+                            Err(error) => {
+                                this.error =
+                                    Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
+                            }
+                        }
+                        cx.notify();
+                    }),
+                )),
+        );
+
+        div()
+            .id("settings-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .bg(bg())
+            .p_5()
+            .child(page.child(api_key_card))
             .into_any_element()
     }
 
@@ -988,8 +1071,21 @@ impl MetsavalApp {
 impl Render for MetsavalApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.header(cx);
-        let sidebar = self.sidebar(cx);
-        let content = self.content(cx);
+
+        let body = if self.settings_open {
+            self.settings_page(cx)
+        } else {
+            let sidebar = self.sidebar(cx);
+            let content = self.content(cx);
+
+            div()
+                .flex()
+                .flex_1()
+                .min_h(px(0.))
+                .child(sidebar)
+                .child(content)
+                .into_any_element()
+        };
 
         div()
             .flex()
@@ -999,14 +1095,7 @@ impl Render for MetsavalApp {
             .text_size(px(13.))
             .text_color(text())
             .child(header)
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h(px(0.))
-                    .child(sidebar)
-                    .child(content),
-            )
+            .child(body)
     }
 }
 
@@ -1046,6 +1135,27 @@ fn muted_text(message: impl Into<SharedString>) -> AnyElement {
         .text_size(px(12.))
         .text_color(muted())
         .child(message.into())
+        .into_any_element()
+}
+
+/// Asetussivun kortti, johon yksittäiset asetukset ryhmitellään.
+fn settings_card(
+    title: &'static str,
+    description: impl Into<SharedString>,
+    body: impl IntoElement,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .p_4()
+        .bg(panel())
+        .border_1()
+        .border_color(border())
+        .rounded_lg()
+        .child(section_title(title))
+        .child(muted_text(description))
+        .child(body)
         .into_any_element()
 }
 

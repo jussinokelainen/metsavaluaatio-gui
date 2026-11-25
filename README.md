@@ -60,8 +60,8 @@ Käyttö
 ------
 
 Ennen ensimmäistä arviota tarvitaan henkilökohtainen MML API-avain. Sen voi
-syöttää sovelluksen vasemman paneelin **Lisäasetukset**-osiossa, jolloin avain
-tallennetaan tiedostoon:
+syöttää sovelluksen oikean yläkulman rataskuvakkeesta avautuvassa
+**Asetukset**-näkymässä, jolloin avain tallennetaan tiedostoon:
 
 ```
 ~/.config/metsavaluaatio/config.toml
@@ -73,7 +73,7 @@ Kun API-avain on olemassa:
 2. Jos kunnalle ei ole vielä tallennettua nimeä, syötä se kerran. Nimi
    muistetaan seuraavaa kertaa varten.
 3. Valitse halutessasi valmis GeoPackage tai GeoPackagen latauskansio
-   **Lisäasetukset**-osiossa.
+   **Asetukset**-näkymässä.
 4. Paina **Hae arvio**.
 5. Valitse tulostekansio ja paina **Tallenna Excel + KML** jos haluat tallentaa tiedot.
 6. Jos haluat avata selaimen heti, sen voi tehdä suoraan sovelluksesta **Avaa Google My Maps** napista

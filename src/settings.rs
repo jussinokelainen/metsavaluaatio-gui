@@ -3,12 +3,26 @@ use std::fs;
 use std::path::PathBuf;
 
 use color_eyre::{Result, eyre::eyre};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// CLI:n config.toml-rakenne.
 #[derive(Deserialize)]
 struct Config {
     api_key: String,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct GlobalOptions {
+    pub gpkg_max_age: i64,
+}
+
+impl Default for GlobalOptions {
+    fn default() -> Self {
+        Self {
+            // 2 viikkoa
+            gpkg_max_age: 14,
+        }
+    }
 }
 
 /// `~/.config/metsavaluaatio/config.toml` (sama kuin CLI käyttää).
@@ -33,11 +47,41 @@ pub fn save_api_key(key: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// `~/.local/share/metsavaluaatio/municipalities.json` (sama kuin CLI käyttää).
-pub fn municipalities_file_path() -> Option<PathBuf> {
+fn data_dir() -> Option<PathBuf> {
     let data_dir = dirs::home_dir()?.join(".local/share/metsavaluaatio");
     fs::create_dir_all(&data_dir).ok()?;
-    Some(data_dir.join("municipalities.json"))
+    Some(data_dir)
+}
+
+/// `~/.local/share/metsavaluaatio/options.json`
+fn options_file_path() -> Option<PathBuf> {
+    Some(data_dir()?.join("options.json"))
+}
+
+/// Lataa ohjelman asetukset. Jos asetusten lataaminen epäonnistuu, palauttaa
+/// vakio asetukset
+pub fn load_options() -> GlobalOptions {
+    let Some(path) = options_file_path() else {
+        return GlobalOptions::default();
+    };
+    let Ok(json) = fs::read_to_string(path) else {
+        return GlobalOptions::default();
+    };
+    serde_json::from_str(&json).unwrap_or_default()
+}
+
+pub fn save_options(opts: &GlobalOptions) {
+    let Some(path) = options_file_path() else {
+        return;
+    };
+    if let Ok(json) = serde_json::to_string_pretty(opts) {
+        let _ = fs::write(path, json);
+    }
+}
+
+/// `~/.local/share/metsavaluaatio/municipalities.json` (sama kuin CLI käyttää).
+fn municipalities_file_path() -> Option<PathBuf> {
+    Some(data_dir()?.join("municipalities.json"))
 }
 
 /// Lukee tallennetut kunta-koodi -> kunta-nimi -parit.

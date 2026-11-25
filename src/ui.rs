@@ -1,7 +1,11 @@
 //! Yhteiset värit ja pienet uudelleenkäytettävät UI-palaset.
 
 use gpui_kit::{
-    App, ClickEvent, FontWeight, Hsla, IntoElement, SharedString, Window, div, prelude::*, px, rgb,
+    App, ClickEvent, FontWeight, Hsla, IntoElement, SharedString, Window,
+    component::{Icon, IconName},
+    div,
+    prelude::*,
+    px, rgb,
 };
 
 // Värit ovat hex-arvoja, jotta ne on helppo pitää yhdessä paikassa.
@@ -164,37 +168,24 @@ pub fn tab_button(
         .child(label)
 }
 
-/// Valintaruudun näköinen rivi.
-pub fn checkbox_row(
+/// Pieni kuvakepainike esimerkiksi yläpalkkiin.
+pub fn icon_button(
     id: &'static str,
-    label: impl Into<SharedString>,
-    checked: bool,
+    icon: IconName,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let label = label.into();
     div()
         .id(id)
         .flex()
         .items_center()
-        .gap_2()
+        .justify_center()
+        .w(px(32.))
+        .h(px(32.))
+        .rounded_md()
         .cursor_pointer()
+        .hover(|style| style.bg(input_bg()))
         .on_click(on_click)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(16.))
-                .h(px(16.))
-                .rounded_sm()
-                .border_1()
-                .border_color(if checked { accent() } else { border() })
-                .bg(if checked { accent() } else { input_bg() })
-                .text_size(px(11.))
-                .text_color(rgb(0xffffff))
-                .child(if checked { "✓" } else { "" }),
-        )
-        .child(div().text_size(px(13.)).text_color(text()).child(label))
+        .child(Icon::new(icon).w(px(18.)).h(px(18.)).text_color(text()))
 }
 
 /// Yhteenvedon tunnuslukukortti.
