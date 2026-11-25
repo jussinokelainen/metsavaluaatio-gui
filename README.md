@@ -10,6 +10,8 @@ GUI versio Metsävaluaatio ohjelmasta.
 
 CLI Versio: https://github.com/jussinokelainen/metsavaluaatio
 
+Core kirjasto: https://github.com/jussinokelainen/metsavaluaatio-core
+
 Asennus
 -------
 
