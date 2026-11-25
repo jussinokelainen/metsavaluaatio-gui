@@ -13,14 +13,14 @@ struct Config {
 
 #[derive(Deserialize, Serialize)]
 pub struct GlobalOptions {
-    pub gpkg_max_age: i64,
+    pub gpkg_age_days: i64,
 }
 
 impl Default for GlobalOptions {
     fn default() -> Self {
         Self {
             // 2 viikkoa
-            gpkg_max_age: 14,
+            gpkg_age_days: 14,
         }
     }
 }
@@ -70,6 +70,7 @@ pub fn load_options() -> GlobalOptions {
     serde_json::from_str(&json).unwrap_or_default()
 }
 
+/// Tallentaa asetukset
 pub fn save_options(opts: &GlobalOptions) {
     let Some(path) = options_file_path() else {
         return;

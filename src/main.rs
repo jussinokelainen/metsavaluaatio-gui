@@ -81,15 +81,6 @@ fn open_main_window(cx: &mut gpui_kit::App) {
     .expect("ikkunan avaaminen epäonnistui");
 
     cx.activate(true);
-
-    // Luo cache hakemiston jos sitä ei ole olemassa
-    let _ = util::create_cache_dir();
-
-    // Poistaa liian vanhat GeoPackaget
-    // TODO: Virheiden tarkistus ja niistä ilmottaminen jos tarvii
-    // ei pitäis tällä hetkellä olla iso ongelma jos palauttaa virheen,
-    // saattaa vaan käyttää yli 2 viikkoa vanhoja geopackageja vähän aikaa
-    let _ = util::clean_outdated_cache();
 }
 
 /// Yläpalkin tilat.
@@ -108,6 +99,7 @@ enum ExportMessage {
 struct MetsavalApp {
     // Asetukset
     api_key: Entity<InputState>,
+    gpkg_age_input: Entity<InputState>,
     settings_open: bool,
     municipalities: HashMap<String, String>,
     opts: GlobalOptions,
@@ -151,13 +143,19 @@ impl MetsavalApp {
                 .masked(true)
         });
 
+        let opts = settings::load_options();
+
+        let gpkg_age_input =
+            cx.new(|cx| InputState::new(window, cx).default_value(&opts.gpkg_age_days.to_string()));
+
         let output_dir = cx.new(|cx| InputState::new(window, cx).default_value(&output_dir_text));
 
         let app = Self {
             api_key,
             settings_open: api_key_text.trim().is_empty(),
             municipalities: settings::load_municipalities(),
-            opts: settings::load_options(),
+            opts,
+            gpkg_age_input,
             property_id: cx.new(|cx| InputState::new(window, cx).placeholder("esim. 123-45-6-789")),
             municipality_input: cx.new(|cx| InputState::new(window, cx).placeholder("Kunnan nimi")),
             use_gpkg: false,
@@ -179,6 +177,15 @@ impl MetsavalApp {
             done_rx: None,
             export_rx: None,
         };
+
+        // Luo cache hakemiston jos sitä ei ole olemassa
+        let _ = util::create_cache_dir();
+
+        // Poistaa liian vanhat GeoPackaget
+        // TODO: Virheiden tarkistus ja niistä ilmottaminen jos tarvii
+        // ei pitäis tällä hetkellä olla iso ongelma jos palauttaa virheen,
+        // saattaa vaan käyttää yli 2 viikkoa vanhoja geopackageja vähän aikaa
+        let _ = util::clean_outdated_cache(app.opts.gpkg_age_days);
 
         // Tekstikentät ovat omia GPUI-entiteettejään, joten niiden
         // muutoksista pitää kertoa myös pää-näkymälle. Muuten esimerkiksi
@@ -410,6 +417,8 @@ impl MetsavalApp {
                     IconName::ArrowLeft,
                     cx.listener(|this, _, _, cx| {
                         this.settings_open = false;
+                        this.notice = None;
+                        this.error = None;
                         settings::save_options(&this.opts);
                         cx.notify();
                     }),
@@ -695,6 +704,11 @@ impl MetsavalApp {
             .into_any_element()
     }
 
+    fn set_gpkg_age(&mut self, age: i64) {
+        self.opts.gpkg_age_days = age;
+        settings::save_options(&self.opts);
+    }
+
     /// Sovelluksen laajuiset asetukset. Uudet asetukset voi lisätä omiksi
     /// korteikseen tänne.
     fn settings_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -773,6 +787,38 @@ impl MetsavalApp {
                 )),
         );
 
+        let gpkg_age_card = settings_card(
+            "GeoPackagen säilytysaika",
+            "Aika päivissä kunnes GeoPackaget poistetaan automaattisesti (vakio: 14)",
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(Input::new(&self.gpkg_age_input).bg(input_bg()))
+                .child(secondary_button(
+                    "settings-save-max-age",
+                    "Tallenna",
+                    true,
+                    cx.listener(|this, _, _, cx| {
+                        let age = this.gpkg_age_input.read(cx).value().to_string();
+
+                        match age.parse::<i64>() {
+                            Ok(age) => {
+                                this.notice =
+                                    Some(format!("GeoPackage säilytysaika tallennettu: {}", age));
+                                this.set_gpkg_age(age);
+                                this.error = None
+                            }
+                            Err(error) => {
+                                this.error = Some(format!("Tallennus epäonnistui: {error:#}"));
+                            }
+                        }
+
+                        cx.notify();
+                    }),
+                )),
+        );
+
         div()
             .id("settings-scroll")
             .flex()
@@ -782,7 +828,7 @@ impl MetsavalApp {
             .overflow_y_scroll()
             .bg(bg())
             .p_5()
-            .child(page.child(api_key_card))
+            .child(page.child(api_key_card).child(gpkg_age_card))
             .into_any_element()
     }
 

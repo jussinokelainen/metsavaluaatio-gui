@@ -4,10 +4,6 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::SystemTime;
 
-/// 2 viikkoa sekunteissa
-/// 60 * 60 * 24 * 7 * 2 = 1 209 600
-const MAX_GPKG_AGE: u64 = 1209600;
-
 pub fn log(tx: &Sender<String>, message: impl Into<String>) {
     let _ = tx.send(message.into());
 }
@@ -19,12 +15,18 @@ pub fn create_cache_dir() -> Result<()> {
     Ok(())
 }
 
+/// Muuttaa päivät samaa aikaa vastaaviin sekunteihin
+fn days_to_seconds(days: i64) -> u64 {
+    let days = days as u64;
+    60 * 60 * 24 * days
+}
+
 /// Poistaa cachen geopackage hakemistosta tarpeeksi vanhat
 /// geopackaget, jotta seuraavan kerran voidaan ladata uusi versio
 ///
 /// Paluttaa Err tyypin jos tiedostojen saamisessa, metadatan lukemisessa
 /// tai tiedoston poistamisessa tapahtui virhe
-pub fn clean_outdated_cache() -> Result<()> {
+pub fn clean_outdated_cache(age_days: i64) -> Result<()> {
     let dir = get_gpkg_dir(None);
     for entry in std::fs::read_dir(dir.clone())? {
         let entry = entry?;
@@ -32,7 +34,7 @@ pub fn clean_outdated_cache() -> Result<()> {
         let modified = metadata.modified()?;
 
         let age = SystemTime::now().duration_since(modified)?.as_secs();
-        if age > MAX_GPKG_AGE {
+        if age > days_to_seconds(age_days) {
             std::fs::remove_file(entry.path())?
         }
     }
