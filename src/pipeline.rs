@@ -24,10 +24,6 @@ pub struct Options {
     pub api_key: String,
     /// Kunnan nimi. Tarvitaan vain, jos GeoPackage ladataan verkosta.
     pub municipality: Option<String>,
-    /// Valmis GeoPackage. Jos annettu, verkosta ei ladata mitään.
-    pub gpkg_path: Option<PathBuf>,
-    /// Hakemisto, johon ladattu GeoPackage puretaan.
-    pub gpkg_download_dir: Option<PathBuf>,
 }
 
 /// Kaikki arvioinnin tulokset. Kevyt kopioida ja siirtää säikeiden välillä.
@@ -66,7 +62,7 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
         .filter(|name| !name.is_empty())
         .map(str::to_string);
 
-    if options.gpkg_path.is_none() && municipality.is_none() {
+    if municipality.is_none() {
         return Err(eyre!(
             "Kunnan nimeä ei tiedetä. Kirjoita kunnan nimi, jotta GeoPackage voidaan hakea."
         ));
@@ -79,19 +75,11 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
 
     // GeoPackage-lataus alkaa heti kun kunta tiedetään, ja etenee taustalla
     // muun haun ajan jos ei ole valmista GeoPackagea olemassa
-    let gpkg_task = if let Some(path) = &options.gpkg_path {
-        log(
-            &log_tx,
-            format!("Käytetään valmista GeoPackagea: {}", path.display()),
-        );
-        None
-    } else {
+    let gpkg_task = {
         let name = municipality
             .clone()
             .ok_or_else(|| eyre!("Kunnan nimi puuttuu"))?;
-        let gpkg_dir = options
-            .gpkg_download_dir
-            .unwrap_or_else(|| util::get_gpkg_dir(Some(&log_tx)));
+        let gpkg_dir = util::get_gpkg_dir(Some(&log_tx));
 
         // Halutun kunnan GeoPackage tiedoston nimi
         let target_file_name = format!("MV_{}.gpkg", name);
@@ -119,9 +107,7 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
 
         if let Some(gpkg_path) = found_gpkgs.into_iter().next() {
             // Valmis GeoPackage löytyi, palauttaa sen oikeassa muodossa
-            Some(tokio::spawn(async move {
-                Ok::<PathBuf, color_eyre::Report>(gpkg_path)
-            }))
+            tokio::spawn(async move { Ok::<PathBuf, color_eyre::Report>(gpkg_path) })
         } else {
             // Valmista GeoPackagea ei löytynyt kyseiselle kunnalle, ladataan se
             log(
@@ -131,7 +117,7 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
             log(&log_tx, format!("Haetaan GeoPackage kunnalle {name}..."));
 
             let task_log = log_tx.clone();
-            Some(tokio::spawn(async move {
+            tokio::spawn(async move {
                 let start = std::time::Instant::now();
                 let path = metsakeskus::download_gpkg(&name, gpkg_dir).await?;
                 let seconds = start.elapsed().as_secs_f64();
@@ -140,7 +126,7 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
                     path.display()
                 ));
                 Ok::<PathBuf, color_eyre::Report>(path)
-            }))
+            })
         }
     };
 
@@ -199,12 +185,7 @@ pub async fn run(options: Options, log_tx: Sender<String>) -> Result<Valuation> 
 
     let stand_ids = collect_stand_ids(&stands)?;
 
-    let gpkg_path = match gpkg_task {
-        Some(task) => task.await??,
-        None => options
-            .gpkg_path
-            .ok_or_else(|| eyre!("GeoPackagen polku puuttuu"))?,
-    };
+    let gpkg_path = gpkg_task.await??;
 
     log(
         &log_tx,

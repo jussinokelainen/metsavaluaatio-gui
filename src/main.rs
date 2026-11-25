@@ -107,9 +107,6 @@ struct MetsavalApp {
     // Hakukanavan kentät
     property_id: Entity<InputState>,
     municipality_input: Entity<InputState>,
-    use_gpkg: bool,
-    gpkg_path: Entity<InputState>,
-    gpkg_download_dir: Entity<InputState>,
     output_dir: Entity<InputState>,
 
     // Tila
@@ -158,11 +155,6 @@ impl MetsavalApp {
             gpkg_age_input,
             property_id: cx.new(|cx| InputState::new(window, cx).placeholder("esim. 123-45-6-789")),
             municipality_input: cx.new(|cx| InputState::new(window, cx).placeholder("Kunnan nimi")),
-            use_gpkg: false,
-            gpkg_path: cx.new(|cx| InputState::new(window, cx).placeholder("/polku/MV_Kunta.gpkg")),
-            gpkg_download_dir: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("oletus: järjestelmän väliaikaiskansio")
-            }),
             output_dir,
             running: false,
             exporting: false,
@@ -235,10 +227,6 @@ impl MetsavalApp {
         let form = RunForm {
             api_key: self.api_key.read(cx).value().to_string(),
             property_id: self.property_id.read(cx).value().to_string(),
-            municipality_input: self.municipality_input.read(cx).value().to_string(),
-            use_gpkg: self.use_gpkg,
-            gpkg_path: self.gpkg_path.read(cx).value().to_string(),
-            gpkg_download_dir: self.gpkg_download_dir.read(cx).value().to_string(),
         };
 
         let prepared = match prepare_run(&form, &mut self.municipalities) {
@@ -263,8 +251,6 @@ impl MetsavalApp {
             property_id: prepared.property_id,
             api_key: prepared.api_key,
             municipality: prepared.municipality,
-            gpkg_path: prepared.gpkg_path,
-            gpkg_download_dir: prepared.gpkg_download_dir,
         };
 
         self.logs.clear();
@@ -522,9 +508,8 @@ impl MetsavalApp {
             .child(field_label("Kiinteistötunnus"))
             .child(Input::new(&self.property_id).bg(input_bg()));
 
-        form = form.child(match (self.use_gpkg, known) {
-            (true, _) => muted_text("Käytetään valmista GeoPackagea, kuntaa ei tarvita."),
-            (false, Some(name)) => div()
+        form = form.child(match known {
+            Some(name) => div()
                 .flex()
                 .flex_col()
                 .gap_1()
@@ -536,7 +521,7 @@ impl MetsavalApp {
                         .child(format!("{name} ({})", code.unwrap_or_default())),
                 )
                 .into_any_element(),
-            (false, None) => match code {
+            None => match code {
                 Some(code) => div()
                     .flex()
                     .flex_col()
