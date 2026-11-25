@@ -78,6 +78,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            Metsavaluaatio-macos.app.zip \
-            --generate-notes
+          tag="$GITHUB_REF_NAME"
+          asset="Metsavaluaatio-macos.app.zip"
+
+          for attempt in 1 2 3 4 5; do
+            # A previous attempt may have created the release despite returning an error.
+            if gh release view "$tag" >/dev/null 2>&1; then
+              if gh release upload "$tag" "$asset" --clobber; then
+                exit 0
+              fi
+            else
+              if gh release create "$tag" "$asset" --generate-notes; then
+                exit 0
+              fi
+            fi
+
+            if [ "$attempt" -lt 5 ]; then
+              delay=$((2 ** attempt))
+              echo "Release operation failed; retrying in ${delay}s (attempt $((attempt + 1))/5)"
+              sleep "$delay"
+            fi
+          done
+
+          echo "Could not create or update release $tag after 5 attempts"
+          exit 1
