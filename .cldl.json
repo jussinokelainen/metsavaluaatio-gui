@@ -25,5 +25,14 @@
     "tag": "NONE",
     "file": "NO_FILE",
     "line": 1
+  },
+  {
+    "title": "siisti gpkgt",
+    "content": "geopackagien hallinta yms vois siistiä ja ehkä poistaa mahollisuuden käyttää omia geopackageja nyt kun ne tallennetaan ja uusiokäytetään joka tapauksessa",
+    "time": 1795621677,
+    "priority": 7,
+    "tag": "NONE",
+    "file": "NO_FILE",
+    "line": 1
   }
 ]

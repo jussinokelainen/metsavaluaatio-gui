@@ -79,6 +79,9 @@ fn open_main_window(cx: &mut gpui_kit::App) {
 
     cx.activate(true);
 
+    // Luo cache hakemiston jos sitä ei ole olemassa
+    let _ = util::create_cache_dir();
+
     // Poistaa liian vanhat GeoPackaget
     // TODO: Virheiden tarkistus ja niistä ilmottaminen jos tarvii
     // ei pitäis tällä hetkellä olla iso ongelma jos palauttaa virheen,

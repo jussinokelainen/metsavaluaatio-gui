@@ -12,6 +12,13 @@ pub fn log(tx: &Sender<String>, message: impl Into<String>) {
     let _ = tx.send(message.into());
 }
 
+/// Luo geopackage cache hakemiston jos sitä ei ole olemassa
+pub fn create_cache_dir() -> Result<()> {
+    let dir = get_gpkg_dir(None);
+    std::fs::create_dir_all(dir)?;
+    Ok(())
+}
+
 /// Poistaa cachen geopackage hakemistosta tarpeeksi vanhat
 /// geopackaget, jotta seuraavan kerran voidaan ladata uusi versio
 ///
