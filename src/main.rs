@@ -10,6 +10,7 @@ mod settings;
 mod ui;
 mod util;
 
+use color_eyre::Result;
 use form::{RunForm, prepare_run};
 use gpui_kit::assets::Assets;
 use gpui_kit::base::Root;
@@ -229,7 +230,11 @@ impl MetsavalApp {
             property_id: self.property_id.read(cx).value().to_string(),
         };
 
-        let prepared = match prepare_run(&form, &mut self.municipalities) {
+        let prepared = match prepare_run(
+            &form,
+            &mut self.municipalities,
+            &self.municipality_input.read(cx).value().to_string(),
+        ) {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.error = Some(error);
@@ -237,10 +242,6 @@ impl MetsavalApp {
                 return;
             }
         };
-
-        if prepared.municipality_added {
-            settings::save_municipalities(&self.municipalities);
-        }
 
         // Tallennetaan avain, jotta sitä ei tarvitse syöttää uudelleen.
         if let Err(error) = settings::save_api_key(&prepared.api_key) {
@@ -804,6 +805,30 @@ impl MetsavalApp {
                 )),
         );
 
+        let empty_municipalities_card = settings_card(
+            "Tyhjennä kuntamuisti",
+            "Poistaa kaikki tallennetut kunnat",
+            div().flex().flex_col().gap_2().child(secondary_button(
+                "settings-empty-municipalities",
+                "Poista tallennetut kunnat",
+                true,
+                cx.listener(|this, _, _, cx| {
+                    match settings::clear_saved_municipalities() {
+                        Ok(_) => {
+                            this.municipalities = HashMap::new();
+                            this.notice = Some("Kuntamuisti tyhjennetty!".to_string());
+                            this.error = None
+                        }
+                        Err(error) => {
+                            this.error = Some(format!("Tyjentäminen epäonnistui: {error:#}"));
+                        }
+                    }
+
+                    cx.notify();
+                }),
+            )),
+        );
+
         div()
             .id("settings-scroll")
             .flex()
@@ -813,7 +838,11 @@ impl MetsavalApp {
             .overflow_y_scroll()
             .bg(bg())
             .p_5()
-            .child(page.child(api_key_card).child(gpkg_age_card))
+            .child(
+                page.child(api_key_card)
+                    .child(gpkg_age_card)
+                    .child(empty_municipalities_card),
+            )
             .into_any_element()
     }
 

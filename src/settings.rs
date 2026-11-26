@@ -106,6 +106,16 @@ pub fn save_municipalities(municipalities: &HashMap<String, String>) {
     }
 }
 
+/// Poistaa kaikki tallennetut kunnat
+pub fn clear_saved_municipalities() -> Result<()> {
+    if let Some(path) = municipalities_file_path() {
+        fs::remove_file(path)?;
+    } else {
+        return Err(eyre!("Kunta-lista tiedostoa ei löytynyt"));
+    }
+    Ok(())
+}
+
 /// Muistaa yhden kunnan nimen ja tallentaa listan.
 #[allow(dead_code)]
 pub fn remember_municipality(code: &str, name: &str) {
