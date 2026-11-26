@@ -95,6 +95,7 @@ pub fn secondary_button(
     label: impl Into<SharedString>,
     enabled: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    text_color: Hsla,
 ) -> impl IntoElement {
     let label = label.into();
     div()
@@ -108,7 +109,7 @@ pub fn secondary_button(
         .bg(input_bg())
         .border_1()
         .border_color(border())
-        .text_color(text())
+        .text_color(text_color)
         .when(enabled, |button| {
             button
                 .cursor_pointer()

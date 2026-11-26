@@ -568,6 +568,7 @@ impl MetsavalApp {
                             this.settings_open = true;
                             cx.notify();
                         }),
+                        text(),
                     )),
             );
         }
@@ -609,6 +610,7 @@ impl MetsavalApp {
                 "Tallenna Excel + KML",
                 self.result.is_some() && !self.exporting && !self.running,
                 cx.listener(|this, _, _, cx| this.start_export(cx)),
+                text(),
             ));
 
         if self.exporting {
@@ -770,6 +772,7 @@ impl MetsavalApp {
                         }
                         cx.notify();
                     }),
+                    text(),
                 )),
         );
 
@@ -802,13 +805,14 @@ impl MetsavalApp {
 
                         cx.notify();
                     }),
+                    text(),
                 )),
         );
 
         let empty_gpkg_cache_card = settings_card(
             "Tyhjennä GeoPackaget",
             format!(
-                "Poistaa kaikki ladatut Geopackaget (tämän hetkinen koko: {})",
+                "Poistaa kaikki ladatut Geopackaget (Välimuistin koko: {})",
                 util::get_readable_gpkg_cache_size()
             ),
             div().flex().flex_col().gap_2().child(secondary_button(
@@ -828,6 +832,7 @@ impl MetsavalApp {
 
                     cx.notify();
                 }),
+                red(),
             )),
         );
 
@@ -852,6 +857,7 @@ impl MetsavalApp {
 
                     cx.notify();
                 }),
+                red(),
             )),
         );
 

@@ -1,6 +1,6 @@
 use chrono::{Local, SubsecRound};
 use color_eyre::{Result, eyre::eyre};
-use std::os::linux::fs::MetadataExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::SystemTime;
@@ -59,7 +59,7 @@ fn get_gpkg_cache_size() -> Result<u64> {
     for entry in std::fs::read_dir(dir.clone())? {
         let entry = entry?;
         let metadata = entry.metadata()?;
-        let size = metadata.st_size();
+        let size = metadata.size();
         total_size += size;
     }
     Ok(total_size)
