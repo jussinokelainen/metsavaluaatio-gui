@@ -1,5 +1,6 @@
 use chrono::{Local, SubsecRound};
 use color_eyre::{Result, eyre::eyre};
+use std::os::linux::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::SystemTime;
@@ -39,6 +40,58 @@ pub fn clean_outdated_cache(age_days: i64) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Poistaa kaikki geopackaget niiden välimuistista
+pub fn clear_gpkg_cache() -> Result<()> {
+    let dir = get_gpkg_dir(None);
+    for entry in std::fs::read_dir(dir.clone())? {
+        let entry = entry?;
+        std::fs::remove_file(entry.path())?;
+    }
+    Ok(())
+}
+
+/// Laskee paljonko tilaa geopackaget vie yhteensä
+fn get_gpkg_cache_size() -> Result<u64> {
+    let dir = get_gpkg_dir(None);
+    let mut total_size = 0;
+    for entry in std::fs::read_dir(dir.clone())? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        let size = metadata.st_size();
+        total_size += size;
+    }
+    Ok(total_size)
+}
+
+/// Palauttaa String:in, jossa on Geopackagien yhteinen koko
+/// luettavassa muodossa
+pub fn get_readable_gpkg_cache_size() -> String {
+    let gb_divider = 1000000000;
+    let mb_divider = 1000000;
+    let kb_divider = 1000;
+    match get_gpkg_cache_size() {
+        Ok(size) => {
+            if size / gb_divider > 0 {
+                // Gigatavuja
+                let size = size as f64 / gb_divider as f64;
+                format!("{:.2} GB", size)
+            } else if size / mb_divider > 0 {
+                // Megatavuja
+                let size = size as f64 / mb_divider as f64;
+                format!("{:.2} MB", size)
+            } else if size / kb_divider > 0 {
+                // Kilotavuja
+                let size = size as f64 / kb_divider as f64;
+                format!("{:.2} KB", size)
+            } else {
+                // Tavuja
+                format!("{size} B")
+            }
+        }
+        Err(_) => String::from("Tuntematon"),
+    }
 }
 
 /// Hakee ohjelman geopackage cache hakemiston

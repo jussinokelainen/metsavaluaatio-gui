@@ -805,6 +805,32 @@ impl MetsavalApp {
                 )),
         );
 
+        let empty_gpkg_cache_card = settings_card(
+            "Tyhjennä GeoPackaget",
+            format!(
+                "Poistaa kaikki ladatut Geopackaget (tämän hetkinen koko: {})",
+                util::get_readable_gpkg_cache_size()
+            ),
+            div().flex().flex_col().gap_2().child(secondary_button(
+                "settings-empty-cache",
+                "Poista ladatut GeoPackaget",
+                true,
+                cx.listener(|this, _, _, cx| {
+                    match util::clear_gpkg_cache() {
+                        Ok(_) => {
+                            this.notice = Some("GeoPackage välimuisti tyhjennetty!".to_string());
+                            this.error = None
+                        }
+                        Err(error) => {
+                            this.error = Some(format!("Tyhjentäminen epäonnistui: {error:#}"));
+                        }
+                    }
+
+                    cx.notify();
+                }),
+            )),
+        );
+
         let empty_municipalities_card = settings_card(
             "Tyhjennä kuntamuisti",
             "Poistaa kaikki tallennetut kunnat",
@@ -820,7 +846,7 @@ impl MetsavalApp {
                             this.error = None
                         }
                         Err(error) => {
-                            this.error = Some(format!("Tyjentäminen epäonnistui: {error:#}"));
+                            this.error = Some(format!("Tyhjentäminen epäonnistui: {error:#}"));
                         }
                     }
 
@@ -841,6 +867,7 @@ impl MetsavalApp {
             .child(
                 page.child(api_key_card)
                     .child(gpkg_age_card)
+                    .child(empty_gpkg_cache_card)
                     .child(empty_municipalities_card),
             )
             .into_any_element()

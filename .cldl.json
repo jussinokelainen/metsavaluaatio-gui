@@ -9,28 +9,10 @@
     "line": 1
   },
   {
-    "title": "asetukset",
-    "content": "lisää asetus menu josta voi nähdä tallennetut\nkunnat ja muokata / poistaa niitä, ja tyhjentää\nladatut geopackaget yms\n\nNew edit:\nasetuksiin kans geopackagen max ikä",
-    "time": 1795571360,
-    "priority": 8,
-    "tag": "NONE",
-    "file": "NO_FILE",
-    "line": 1
-  },
-  {
     "title": "testit",
     "content": "ehkä lisää testejä että enemmän kun 25% coverage, jos on jotain ominaisuuksia jotka voi lisätä testeihin",
     "time": 1795620302,
     "priority": 5,
-    "tag": "NONE",
-    "file": "NO_FILE",
-    "line": 1
-  },
-  {
-    "title": "siisti gpkgt",
-    "content": "geopackagien hallinta yms vois siistiä ja ehkä poistaa mahollisuuden käyttää omia geopackageja nyt kun ne tallennetaan ja uusiokäytetään joka tapauksessa",
-    "time": 1795621677,
-    "priority": 7,
     "tag": "NONE",
     "file": "NO_FILE",
     "line": 1
