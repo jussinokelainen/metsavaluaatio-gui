@@ -41,7 +41,7 @@ pub fn prepare_run(
         None => {
             if !municipality_input.is_empty() {
                 municipalities.insert(code, municipality_input.to_string());
-                settings::save_municipalities(&municipalities);
+                settings::save_municipalities(municipalities);
                 Some(municipality_input.to_owned())
             } else {
                 return Err(format!(

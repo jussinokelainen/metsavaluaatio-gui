@@ -144,7 +144,7 @@ impl MetsavalApp {
         let opts = settings::load_options();
 
         let gpkg_age_input =
-            cx.new(|cx| InputState::new(window, cx).default_value(&opts.gpkg_age_days.to_string()));
+            cx.new(|cx| InputState::new(window, cx).default_value(opts.gpkg_age_days.to_string()));
 
         let output_dir = cx.new(|cx| InputState::new(window, cx).default_value(&output_dir_text));
 
@@ -233,7 +233,7 @@ impl MetsavalApp {
         let prepared = match prepare_run(
             &form,
             &mut self.municipalities,
-            &self.municipality_input.read(cx).value().to_string(),
+            self.municipality_input.read(cx).value().as_ref(),
         ) {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -791,7 +791,7 @@ impl MetsavalApp {
                         match age.parse::<i64>() {
                             Ok(age) => {
                                 this.notice =
-                                    Some(format!("GeoPackage säilytysaika tallennettu: {}", age));
+                                    Some(format!("GeoPackage säilytysaika tallennettu: {age}"));
                                 this.set_gpkg_age(age);
                                 this.error = None
                             }
