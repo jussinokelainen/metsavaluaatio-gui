@@ -4103,8 +4103,8 @@ dependencies = [
 
 [[package]]
 name = "metsaval-core"
-version = "1.0.1"
-source = "git+https://github.com/jussinokelainen/metsavaluaatio-core.git?tag=1.0.1#3a94a33a26da8c12b7d523aa9e101e9675bc4d9b"
+version = "1.1.0"
+source = "git+https://github.com/jussinokelainen/metsavaluaatio-core.git?tag=1.1.0#04c3c7b525b95c30ca915e33304db1d9786e6860"
 dependencies = [
  "color-eyre",
  "geo",
