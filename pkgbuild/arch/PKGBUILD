@@ -1,9 +1,7 @@
 # Maintainer: Jussi Nokelainen <jussinoke@gmail.com>
-#
-# Tämä paketti sisältää vain GPUI-pohjaisen graafisen sovelluksen.
 
 pkgname='metsavaluaatio-gui'
-pkgver=0.3.1
+pkgver=0.4.0
 pkgrel=1
 pkgdesc='Työpöytäsovellus metsän analysointiin'
 arch=('x86_64')
