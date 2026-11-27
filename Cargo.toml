@@ -1,14 +1,14 @@
 [package]
 name = "metsaval-gui"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 
 
 [dependencies]
 metsaval-core = {
     git = "https://github.com/jussinokelainen/metsavaluaatio-core.git",
-    # branch = "master",
     tag = "1.1.0",
+    # branch = "master",
 }
 color-eyre = "0.6.5"
 geo = "0.33.1"

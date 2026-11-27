@@ -756,35 +756,35 @@ impl MetsavalApp {
                 .child(Input::new(&self.gpkg_age_input).bg(input_bg())),
         );
 
-        let save_settings_card = settings_card(
+        let save_settings_card = div().flex().flex_col().rounded_lg().child(secondary_button(
+            "save-settings",
             "Tallenna Asetukset",
-            "Tallentaa yllä olevat asetukset",
-            div().flex().flex_col().gap_2().child(secondary_button(
-                "save-settings",
-                "Tallenna",
-                true,
-                cx.listener(|this, _, _, cx| {
-                    let age = this.gpkg_age_input.read(cx).value().to_string();
+            true,
+            cx.listener(|this, _, _, cx| {
+                let age = this.gpkg_age_input.read(cx).value().to_string();
 
-                    let key = this.api_key_input.read(cx).value().to_string();
-                    match age.parse::<i64>() {
-                        Ok(age) => {
-                            this.set_all_opts(GlobalOptions{ api_key: Some(key), gpkg_age_days: age});
-                            this.notice =
-                                Some(format!("Asetukset tallennettu!"));
-                            this.error = None
-                        }
-                        Err(error) => {
-                            this.notice = None;
-                            this.error = Some(format!("Asetusten tallennus epäonnistui (GeoPackagen säilytysaika): {error:#}"));
-                        }
+                let key = this.api_key_input.read(cx).value().to_string();
+                match age.parse::<i64>() {
+                    Ok(age) => {
+                        this.set_all_opts(GlobalOptions {
+                            api_key: Some(key),
+                            gpkg_age_days: age,
+                        });
+                        this.notice = Some(format!("Asetukset tallennettu!"));
+                        this.error = None
                     }
+                    Err(error) => {
+                        this.notice = None;
+                        this.error = Some(format!(
+                            "Asetusten tallennus epäonnistui (GeoPackagen säilytysaika): {error:#}"
+                        ));
+                    }
+                }
 
-                    cx.notify();
-                }),
-                green()
-            )),
-        );
+                cx.notify();
+            }),
+            green(),
+        ));
 
         let empty_gpkg_cache_card = settings_card(
             "Tyhjennä GeoPackaget",
