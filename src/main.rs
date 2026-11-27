@@ -689,23 +689,14 @@ impl MetsavalApp {
             .into_any_element()
     }
 
-    fn set_api_key(&mut self, key: &str) {
-        self.opts.api_key = Some(key.to_owned());
-        settings::save_options(&self.opts);
-    }
-
-    fn set_gpkg_age(&mut self, age: i64) {
-        self.opts.gpkg_age_days = age;
+    fn set_all_opts(&mut self, new_opts: GlobalOptions) {
+        self.opts = new_opts;
         settings::save_options(&self.opts);
     }
 
     /// Sovelluksen laajuiset asetukset. Uudet asetukset voi lisätä omiksi
     /// korteikseen tänne.
     fn settings_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let config_path = settings::cli_config_file()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "–".to_string());
-
         let mut page = div()
             .flex()
             .flex_col()
@@ -744,30 +735,15 @@ impl MetsavalApp {
 
         let api_key_card = settings_card(
             "MML API-avain",
-            format!("Avain tallennetaan tiedostoon {config_path}."),
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    Input::new(&self.api_key_input)
-                        .content_type(InputContentType::Password)
-                        .mask_toggle()
-                        .bg(input_bg()),
-                )
-                .child(secondary_button(
-                    "settings-save-api-key",
-                    "Tallenna avain",
-                    true,
-                    cx.listener(|this, _, _, cx| {
-                        let key = this.api_key_input.read(cx).value().to_string();
-                        this.notice = Some(format!("API-avain tallennettu"));
-                        this.set_api_key(&key);
-                        this.error = None;
-                        cx.notify();
-                    }),
-                    text(),
-                )),
+            format!(
+                "Tallenna henkilökohtainen MML API-avain (vaaditaan jotta ohjelmaa voi käyttää)."
+            ),
+            div().flex().flex_col().gap_2().child(
+                Input::new(&self.api_key_input)
+                    .content_type(InputContentType::Password)
+                    .mask_toggle()
+                    .bg(input_bg()),
+            ),
         );
 
         let gpkg_age_card = settings_card(
@@ -777,30 +753,37 @@ impl MetsavalApp {
                 .flex()
                 .flex_col()
                 .gap_2()
-                .child(Input::new(&self.gpkg_age_input).bg(input_bg()))
-                .child(secondary_button(
-                    "settings-save-max-age",
-                    "Tallenna",
-                    true,
-                    cx.listener(|this, _, _, cx| {
-                        let age = this.gpkg_age_input.read(cx).value().to_string();
+                .child(Input::new(&self.gpkg_age_input).bg(input_bg())),
+        );
 
-                        match age.parse::<i64>() {
-                            Ok(age) => {
-                                this.notice =
-                                    Some(format!("GeoPackage säilytysaika tallennettu: {age}"));
-                                this.set_gpkg_age(age);
-                                this.error = None
-                            }
-                            Err(error) => {
-                                this.error = Some(format!("Tallennus epäonnistui: {error:#}"));
-                            }
+        let save_settings_card = settings_card(
+            "Tallenna Asetukset",
+            "Tallentaa yllä olevat asetukset",
+            div().flex().flex_col().gap_2().child(secondary_button(
+                "save-settings",
+                "Tallenna",
+                true,
+                cx.listener(|this, _, _, cx| {
+                    let age = this.gpkg_age_input.read(cx).value().to_string();
+
+                    let key = this.api_key_input.read(cx).value().to_string();
+                    match age.parse::<i64>() {
+                        Ok(age) => {
+                            this.set_all_opts(GlobalOptions{ api_key: Some(key), gpkg_age_days: age});
+                            this.notice =
+                                Some(format!("Asetukset tallennettu!"));
+                            this.error = None
                         }
+                        Err(error) => {
+                            this.notice = None;
+                            this.error = Some(format!("Asetusten tallennus epäonnistui (GeoPackagen säilytysaika): {error:#}"));
+                        }
+                    }
 
-                        cx.notify();
-                    }),
-                    text(),
-                )),
+                    cx.notify();
+                }),
+                green()
+            )),
         );
 
         let empty_gpkg_cache_card = settings_card(
@@ -867,6 +850,7 @@ impl MetsavalApp {
             .child(
                 page.child(api_key_card)
                     .child(gpkg_age_card)
+                    .child(save_settings_card)
                     .child(empty_gpkg_cache_card)
                     .child(empty_municipalities_card),
             )
