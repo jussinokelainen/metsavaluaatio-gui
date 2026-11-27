@@ -34,9 +34,9 @@ HUOM! Asennus poistaa Metsavaluaatio.app tiedostosta com.apple.quarantine attrib
 #### Cargo
 
 ```bash
-git clone ssh://git@gitlab.internal.nokehub.net:222/jussinokelainen/metsavaluaatio-gui.git
+git clone git@github.com:jussinokelainen/metsavaluaatio-gui.git
 cd metsavaluaatio-gui
-cargo install --path . --bin metsaval-gui
+cargo install --path .
 ```
 
 Muista lisätä `~/.cargo/bin` `$PATH`-muuttujaan esimerkiksi `~/.bashrc`
@@ -61,22 +61,16 @@ Käyttö
 
 Ennen ensimmäistä arviota tarvitaan henkilökohtainen MML API-avain. Sen voi
 syöttää sovelluksen oikean yläkulman rataskuvakkeesta avautuvassa
-**Asetukset**-näkymässä, jolloin avain tallennetaan tiedostoon:
-
-```
-~/.config/metsavaluaatio/config.toml
-```
+**Asetukset**-näkymässä.
 
 Kun API-avain on olemassa:
 
 1. Syötä kiinteistötunnus, esimerkiksi `123-45-6-789`
 2. Jos kunnalle ei ole vielä tallennettua nimeä, syötä se kerran. Nimi
    muistetaan seuraavaa kertaa varten.
-3. Valitse halutessasi valmis GeoPackage tai GeoPackagen latauskansio
-   **Asetukset**-näkymässä.
-4. Paina **Hae arvio**.
-5. Valitse tulostekansio ja paina **Tallenna Excel + KML** jos haluat tallentaa tiedot.
-6. Jos haluat avata selaimen heti, sen voi tehdä suoraan sovelluksesta **Avaa Google My Maps** napista
+3. Paina **Hae arvio**.
+4. Valitse tulostekansio ja paina **Tallenna Excel + KML** jos haluat tallentaa tiedot.
+5. Jos haluat avata selaimen heti, sen voi tehdä suoraan sovelluksesta **Avaa Google My Maps** napista
 
 Kartan luominen
 ---------------
