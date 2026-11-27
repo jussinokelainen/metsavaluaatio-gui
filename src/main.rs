@@ -99,7 +99,7 @@ enum ExportMessage {
 
 struct MetsavalApp {
     // Asetukset
-    api_key: Entity<InputState>,
+    api_key_input: Entity<InputState>,
     gpkg_age_input: Entity<InputState>,
     settings_open: bool,
     municipalities: HashMap<String, String>,
@@ -129,19 +129,21 @@ struct MetsavalApp {
 
 impl MetsavalApp {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_text = settings::load_api_key().unwrap_or_default();
+        let mut opts = settings::load_options();
+        if opts.api_key.is_none() {
+            opts.api_key = Some(settings::load_cli_api_key().unwrap_or_default());
+            settings::save_options(&opts);
+        }
         let output_dir_text = dirs::download_dir()
             .or_else(dirs::home_dir)
             .map(|path| path.display().to_string())
             .unwrap_or_default();
 
-        let api_key = cx.new(|cx| {
+        let api_key_input = cx.new(|cx| {
             InputState::new(window, cx)
-                .default_value(&api_key_text)
+                .default_value(&opts.api_key.clone().unwrap_or_default())
                 .masked(true)
         });
-
-        let opts = settings::load_options();
 
         let gpkg_age_input =
             cx.new(|cx| InputState::new(window, cx).default_value(opts.gpkg_age_days.to_string()));
@@ -149,8 +151,8 @@ impl MetsavalApp {
         let output_dir = cx.new(|cx| InputState::new(window, cx).default_value(&output_dir_text));
 
         let app = Self {
-            api_key,
-            settings_open: api_key_text.trim().is_empty(),
+            api_key_input,
+            settings_open: opts.api_key.clone().unwrap_or_default().trim().is_empty(),
             municipalities: settings::load_municipalities(),
             opts,
             gpkg_age_input,
@@ -226,7 +228,7 @@ impl MetsavalApp {
         self.notice = None;
 
         let form = RunForm {
-            api_key: self.api_key.read(cx).value().to_string(),
+            api_key: self.opts.api_key.clone().unwrap_or_default(),
             property_id: self.property_id.read(cx).value().to_string(),
         };
 
@@ -242,11 +244,6 @@ impl MetsavalApp {
                 return;
             }
         };
-
-        // Tallennetaan avain, jotta sitä ei tarvitse syöttää uudelleen.
-        if let Err(error) = settings::save_api_key(&prepared.api_key) {
-            self.notice = Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
-        }
 
         let options = Options {
             property_id: prepared.property_id,
@@ -392,7 +389,7 @@ impl MetsavalApp {
     }
 
     fn header(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let has_key = !self.api_key.read(cx).value().to_string().is_empty();
+        let has_key = !self.opts.api_key.as_ref().is_some_and(|s| s.is_empty());
 
         let title = if self.settings_open {
             div()
@@ -539,7 +536,7 @@ impl MetsavalApp {
 
         // Sovelluksen laajuiset asetukset (API-avain, GeoPackage) ovat omalla
         // asetussivullaan, jonne pääsee yläpalkin rataskuvakkeesta.
-        if self.api_key.read(cx).value().trim().is_empty() {
+        if self.opts.api_key.as_ref().is_some_and(|s| s.is_empty()) {
             form = form.child(
                 div()
                     .flex()
@@ -692,6 +689,11 @@ impl MetsavalApp {
             .into_any_element()
     }
 
+    fn set_api_key(&mut self, key: &str) {
+        self.opts.api_key = Some(key.to_owned());
+        settings::save_options(&self.opts);
+    }
+
     fn set_gpkg_age(&mut self, age: i64) {
         self.opts.gpkg_age_days = age;
         settings::save_options(&self.opts);
@@ -700,7 +702,7 @@ impl MetsavalApp {
     /// Sovelluksen laajuiset asetukset. Uudet asetukset voi lisätä omiksi
     /// korteikseen tänne.
     fn settings_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let config_path = settings::config_file_path()
+        let config_path = settings::cli_config_file()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "–".to_string());
 
@@ -748,7 +750,7 @@ impl MetsavalApp {
                 .flex_col()
                 .gap_2()
                 .child(
-                    Input::new(&self.api_key)
+                    Input::new(&self.api_key_input)
                         .content_type(InputContentType::Password)
                         .mask_toggle()
                         .bg(input_bg()),
@@ -758,18 +760,10 @@ impl MetsavalApp {
                     "Tallenna avain",
                     true,
                     cx.listener(|this, _, _, cx| {
-                        let key = this.api_key.read(cx).value().to_string();
-                        match settings::save_api_key(&key) {
-                            Ok(path) => {
-                                this.notice =
-                                    Some(format!("API-avain tallennettu: {}", path.display()));
-                                this.error = None;
-                            }
-                            Err(error) => {
-                                this.error =
-                                    Some(format!("API-avaimen tallennus epäonnistui: {error:#}"));
-                            }
-                        }
+                        let key = this.api_key_input.read(cx).value().to_string();
+                        this.notice = Some(format!("API-avain tallennettu"));
+                        this.set_api_key(&key);
+                        this.error = None;
                         cx.notify();
                     }),
                     text(),

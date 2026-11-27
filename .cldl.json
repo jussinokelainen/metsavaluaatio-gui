@@ -18,19 +18,28 @@
     "line": 1
   },
   {
-    "title": "apikey",
-    "content": "siirrä apikey options structiin ja tiedostoon, kuitenkin siten että käyttäjän ei tarvii asettaa sitä uudestaan tai jotain",
-    "time": 1795631172,
-    "priority": 6,
+    "title": "asetusten tallennus",
+    "content": "Asetusten tallennus pitäis tapahtua yhestä napista kaikille eikä jokaiselle oma nappi",
+    "time": 1795712892,
+    "priority": 7,
     "tag": "NONE",
     "file": "NO_FILE",
     "line": 1
   },
   {
-    "title": "asetusten tallennus",
-    "content": "Asetusten tallennus pitäis tapahtua yhestä napista kaikille eikä jokaiselle oma nappi",
-    "time": 1795712892,
-    "priority": 7,
+    "title": "poista config lukeminen",
+    "content": "jossain myöhemmässä versiossa vois poistaa api avaimen etsimisen .config tiedostosta, se on vaa väliaikasesti ettei tarvii antaa avainta uudestaan päivityksen takia",
+    "time": 1795738029,
+    "priority": 1,
+    "tag": "NONE",
+    "file": "NO_FILE",
+    "line": 1
+  },
+  {
+    "title": "opts input",
+    "content": "siirrä kaikki options input jutut omaan structiin niiku globaloptions, ei vielä kovin tärkeä mut sit ku niitä on useempi nii ois parempi",
+    "time": 1795738119,
+    "priority": 3,
     "tag": "NONE",
     "file": "NO_FILE",
     "line": 1

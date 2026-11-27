@@ -7,13 +7,14 @@ use serde::{Deserialize, Serialize};
 
 /// CLI:n config.toml-rakenne.
 #[derive(Deserialize)]
-struct Config {
+struct CliConfig {
     api_key: String,
 }
 
 #[derive(Deserialize, Serialize)]
 pub struct GlobalOptions {
     pub gpkg_age_days: i64,
+    pub api_key: Option<String>,
 }
 
 impl Default for GlobalOptions {
@@ -21,30 +22,24 @@ impl Default for GlobalOptions {
         Self {
             // 2 viikkoa
             gpkg_age_days: 14,
+            api_key: None,
         }
     }
 }
 
 /// `~/.config/metsavaluaatio/config.toml` (sama kuin CLI käyttää).
-pub fn config_file_path() -> Option<PathBuf> {
+pub fn cli_config_file() -> Option<PathBuf> {
     let config_dir = dirs::home_dir()?.join(".config/metsavaluaatio");
     fs::create_dir_all(&config_dir).ok()?;
     Some(config_dir.join("config.toml"))
 }
 
-/// Lukee tallennetun MML API-avaimen, jos sellainen on.
-pub fn load_api_key() -> Option<String> {
-    let content = fs::read_to_string(config_file_path()?).ok()?;
-    let config: Config = toml::from_str(&content).ok()?;
+/// Lukee .config hakemistosta (nykyään käytössä vain CLI työkalussa)
+/// tallennetun MML API-avaimen, jos sellainen on.
+pub fn load_cli_api_key() -> Option<String> {
+    let content = fs::read_to_string(cli_config_file()?).ok()?;
+    let config: CliConfig = toml::from_str(&content).ok()?;
     Some(config.api_key)
-}
-
-/// Tallentaa API-avaimen CLI:n käyttämään config-tiedostoon.
-pub fn save_api_key(key: &str) -> Result<PathBuf> {
-    let path =
-        config_file_path().ok_or_else(|| eyre!("Config-hakemiston sijaintia ei saatu selville"))?;
-    fs::write(&path, format!("api_key = \"{}\"", key.trim()))?;
-    Ok(path)
 }
 
 fn data_dir() -> Option<PathBuf> {
@@ -130,7 +125,7 @@ mod tests {
 
     #[test]
     fn config_parsing_accepts_the_cli_format() {
-        let config: Config = toml::from_str("api_key = \"avain123\"").unwrap();
+        let config: CliConfig = toml::from_str("api_key = \"avain123\"").unwrap();
         assert_eq!(config.api_key, "avain123");
     }
 
